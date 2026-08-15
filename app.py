@@ -359,29 +359,112 @@ def score_color(score: float) -> str:
     return "#c62828"
 
 
+
 def next_weekday(d: date, weekday: int) -> date:
     days_ahead = (weekday - d.weekday()) % 7
     return d + timedelta(days=days_ahead)
 
 
-def mock_jackpot_info(d: date) -> dict:
-    seed = int(d.strftime("%Y%m%d"))
-    h = hashlib.md5(str(seed).encode()).hexdigest()
-    base = int(h[:6], 16) % 40 + 5
-    tue = next_weekday(d, 1)
-    sat = next_weekday(d, 5)
-    return {
-        "tuesday": {
-            "date": tue,
-            "jackpot_mio": round(base + (int(h[6:8], 16) % 10), 1),
-            "tips_mio": round(18 + (int(h[8:10], 16) % 15), 1),
-        },
-        "saturday": {
-            "date": sat,
-            "jackpot_mio": round(base + 8 + (int(h[10:12], 16) % 12), 1),
-            "tips_mio": round(28 + (int(h[12:14], 16) % 20), 1),
-        },
+def next_n_draw_dates(from_date: date, weekdays: list[int], n: int = 3) -> list[date]:
+    """Nächste n Ziehungsdaten für gegebene Wochentage (0=Mo … 6=So)."""
+    out = []
+    d = from_date
+    # include today if it is a draw day
+    for _ in range(60):
+        if d.weekday() in weekdays:
+            out.append(d)
+            if len(out) >= n:
+                break
+        d += timedelta(days=1)
+    return out
+
+
+def fetch_jackpots() -> dict:
+    """
+    Versucht aktuelle Jackpots von lotto.de zu lesen.
+    Fallback auf zuletzt bekannte öffentliche Werte.
+    """
+    result = {
+        "eurojackpot": {"jackpot_mio": 22.0, "source": "fallback"},
+        "6aus49": {"jackpot_mio": 50.0, "source": "fallback"},
     }
+    try:
+        import urllib.request
+        import re
+        req = urllib.request.Request(
+            "https://www.lotto.de/aktuelle-jackpots",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; AstroLotto/1.0)"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        # Heuristik: Zahlen vor "Millionen"
+        millions = [int(x) for x in re.findall(r"(\d+)\s*Millionen", html)]
+        # Typische Reihenfolge auf der Seite: zuerst 6aus49, dann Eurojackpot
+        if len(millions) >= 2:
+            # 6aus49 oft 45–50, EJ variabel
+            for m in millions:
+                if m >= 40:
+                    result["6aus49"] = {"jackpot_mio": float(m), "source": "lotto.de"}
+                elif 10 <= m < 40:
+                    result["eurojackpot"] = {"jackpot_mio": float(m), "source": "lotto.de"}
+            # falls nur eine große Zahl
+            if result["6aus49"]["source"] == "fallback" and millions:
+                result["6aus49"]["jackpot_mio"] = float(max(millions))
+        elif len(millions) == 1:
+            if millions[0] >= 40:
+                result["6aus49"]["jackpot_mio"] = float(millions[0])
+                result["6aus49"]["source"] = "lotto.de"
+            else:
+                result["eurojackpot"]["jackpot_mio"] = float(millions[0])
+                result["eurojackpot"]["source"] = "lotto.de"
+    except Exception:
+        pass
+    return result
+
+
+# Spiel-Konfiguration
+LOTTERY_CONFIG = {
+    "eurojackpot": {
+        "label": "Eurojackpot",
+        "weekdays": [1, 4],  # Di, Fr
+        "weekday_names": {1: "Dienstag", 4: "Freitag"},
+        "draw_hour": 20,
+        "tips_base": 25.0,
+        "max_jackpot": 120.0,
+    },
+    "6aus49": {
+        "label": "LOTTO 6aus49",
+        "weekdays": [2, 5],  # Mi, Sa
+        "weekday_names": {2: "Mittwoch", 5: "Samstag"},
+        "draw_hour": 18,
+        "tips_base": 22.0,
+        "max_jackpot": 50.0,
+    },
+}
+
+
+def build_draw_info(game_key: str, from_date: date, jackpots: dict) -> list[dict]:
+    """Baut die nächsten 3 Ziehungen mit Score-Platzhaltern für Jackpot/Tipps."""
+    cfg = LOTTERY_CONFIG[game_key]
+    dates = next_n_draw_dates(from_date, cfg["weekdays"], n=3)
+    jp = jackpots.get(game_key, {}).get("jackpot_mio", 20.0)
+    source = jackpots.get(game_key, {}).get("source", "fallback")
+    draws = []
+    for i, d in enumerate(dates):
+        # leichte Variation der Tipp-Schätzung
+        seed = int(d.strftime("%Y%m%d")) + hash(game_key) % 1000
+        tips = round(cfg["tips_base"] + (seed % 17) * 0.4 + i * 1.2, 1)
+        # Jackpot bleibt für nahe Ziehungen gleich (Rollover), leichte Anhebung später
+        jp_i = min(cfg["max_jackpot"], round(jp + i * (1.5 if game_key == "eurojackpot" else 0), 1))
+        draws.append({
+            "date": d,
+            "weekday_name": cfg["weekday_names"].get(d.weekday(), d.strftime("%A")),
+            "jackpot_mio": jp_i,
+            "tips_mio": tips,
+            "source": source,
+            "draw_hour": cfg["draw_hour"],
+        })
+    return draws
 
 
 def format_reasons(reasons) -> str:
@@ -450,6 +533,18 @@ st.caption(f"{lat:.4f}°, {lon:.4f}° · TZ: {_tz} · {len(CITY_DATA)} Städte")
 save_profile = st.checkbox("Profil für diese Sitzung speichern", value=True)
 
 st.markdown("---")
+st.subheader("Lotterie")
+lottery_mode = st.radio(
+    "Spielmodus",
+    options=["eurojackpot", "6aus49"],
+    format_func=lambda k: "Eurojackpot (Di + Fr)" if k == "eurojackpot" else "LOTTO 6aus49 (Mi + Sa)",
+    index=0,
+    horizontal=True,
+    help="Eurojackpot ist der Standard. Umschalten ändert Ziehungs-Tage und Jackpot-Daten.",
+)
+st.caption("AstroWeather zeigt die **nächsten 3 Ziehungen** des gewählten Spiels.")
+
+st.markdown("---")
 
 if st.button("Score berechnen", type="primary", use_container_width=True):
     with st.spinner("Berechne Ephemeriden & Scores …"):
@@ -476,22 +571,19 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
         phase_label = moon_phase_label(phase_frac)
         merc_rx = mercury_retrograde(query_dt)
 
-        jack = mock_jackpot_info(query_date)
+        jackpots = fetch_jackpots()
+        draws = build_draw_info(lottery_mode, query_date, jackpots)
 
-        tue_dt = datetime.combine(jack["tuesday"]["date"], datetime.strptime("18:00", "%H:%M").time()).replace(
-            tzinfo=timezone.utc
-        )
-        sat_dt = datetime.combine(jack["saturday"]["date"], datetime.strptime("18:00", "%H:%M").time()).replace(
-            tzinfo=timezone.utc
-        )
-
-        gen_tue, _ = score_general(tue_dt)
-        per_tue, _ = score_personal(birth_dt, tue_dt, lat, lon)
-        comb_tue = (gen_tue + per_tue) / 2.0
-
-        gen_sat, _ = score_general(sat_dt)
-        per_sat, _ = score_personal(birth_dt, sat_dt, lat, lon)
-        comb_sat = (gen_sat + per_sat) / 2.0
+        # AstroScores für die nächsten 3 Ziehungen
+        draw_scores = []
+        for dr in draws:
+            dr_dt = datetime.combine(
+                dr["date"],
+                datetime.strptime(f"{dr['draw_hour']:02d}:00", "%H:%M").time(),
+            ).replace(tzinfo=timezone.utc)
+            g, _ = score_general(dr_dt)
+            p, _ = score_personal(birth_dt, dr_dt, lat, lon)
+            draw_scores.append(round((g + p) / 2.0, 1))
 
         trend_dates = []
         trend_scores = []
@@ -558,50 +650,44 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
         )
 
     st.markdown("---")
-    st.subheader("AstroWeather – Ziehungen")
+    st.subheader(f"AstroWeather – {LOTTERY_CONFIG[lottery_mode]['label']}")
 
-    diff = comb_sat - comb_tue
-    if abs(diff) < 1.5:
-        cmp_text = "Dienstag und Samstag liegen nahezu gleich."
-    elif diff > 0:
-        cmp_text = f"**Samstag** liegt **{diff:.1f} Punkte** höher als Dienstag."
+    src = draws[0]["source"] if draws else "fallback"
+    if src == "lotto.de":
+        st.caption("Jackpots: live von lotto.de")
     else:
-        cmp_text = f"**Dienstag** liegt **{abs(diff):.1f} Punkte** höher als Samstag."
-    st.markdown(cmp_text)
+        st.caption("Jackpots: Fallback-Werte (live-Abruf nicht verfügbar)")
 
-    tcol, scol = st.columns(2)
-    with tcol:
+    # Vergleich: bester der 3 Tage
+    if draw_scores:
+        best_idx = draw_scores.index(max(draw_scores))
+        best = draws[best_idx]
         st.markdown(
-            f"""
-            <div style="text-align:center; padding:1rem; border-radius:10px;
-                        background:#fff8e1; border:2px solid {score_color(comb_tue)};">
-                <div style="font-size:0.85rem; color:#666;">Dienstag {jack['tuesday']['date'].strftime('%d.%m.%Y')}</div>
-                <div style="font-size:1.5rem; font-weight:800; color:{score_color(comb_tue)};">{comb_tue:.1f} %</div>
-                <div>{luck_symbol(comb_tue)}</div>
-                <div style="font-size:0.8rem; color:#555; margin-top:0.3rem;">
-                    ≈ {jack['tuesday']['jackpot_mio']} Mio. € · {jack['tuesday']['tips_mio']} Mio. Tipps
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with scol:
-        st.markdown(
-            f"""
-            <div style="text-align:center; padding:1rem; border-radius:10px;
-                        background:#e3f2fd; border:2px solid {score_color(comb_sat)};">
-                <div style="font-size:0.85rem; color:#666;">Samstag {jack['saturday']['date'].strftime('%d.%m.%Y')}</div>
-                <div style="font-size:1.5rem; font-weight:800; color:{score_color(comb_sat)};">{comb_sat:.1f} %</div>
-                <div>{luck_symbol(comb_sat)}</div>
-                <div style="font-size:0.8rem; color:#555; margin-top:0.3rem;">
-                    ≈ {jack['saturday']['jackpot_mio']} Mio. € · {jack['saturday']['tips_mio']} Mio. Tipps
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+            f"**Bester Astro-Tag unter den nächsten 3 Ziehungen:** "
+            f"{best['weekday_name']} {best['date'].strftime('%d.%m.%Y')} "
+            f"({draw_scores[best_idx]:.1f} %)"
         )
 
-    st.markdown("---")
+    cols = st.columns(3)
+    colors_bg = ["#fff8e1", "#e3f2fd", "#f3e5f5"]
+    for i, (col, dr, sc) in enumerate(zip(cols, draws, draw_scores)):
+        with col:
+            st.markdown(
+                f"""
+                <div style="text-align:center; padding:0.85rem; border-radius:10px;
+                            background:{colors_bg[i % 3]}; border:2px solid {score_color(sc)}; min-height:150px;">
+                    <div style="font-size:0.8rem; color:#666;">{dr['weekday_name']}<br>{dr['date'].strftime('%d.%m.%Y')}</div>
+                    <div style="font-size:1.35rem; font-weight:800; color:{score_color(sc)};">{sc:.1f} %</div>
+                    <div>{luck_symbol(sc)}</div>
+                    <div style="font-size:0.75rem; color:#555; margin-top:0.35rem;">
+                        ≈ {dr['jackpot_mio']} Mio. €<br>
+                        Tipps ≈ {dr['tips_mio']} Mio.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
     st.subheader("Score-Verlauf (14 Tage)")
     import pandas as pd
 
@@ -622,6 +708,7 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
     export_text = f"""AstroLotto Score – Export
 Abfrage: {query_date.isoformat()}
 Geburt: {birth_date.isoformat()} {birth_time.strftime('%H:%M')} · {city_choice}
+Lotterie: {LOTTERY_CONFIG[lottery_mode]['label']}
 
 Kombinierter Score: {comb_score:.1f} %
 Allgemein: {gen_score:.1f} %
@@ -630,10 +717,11 @@ Persönlich: {per_score:.1f} %
 Mondphase: {phase_label}
 Merkur: {"rückläufig" if merc_rx else "direktläufig"}
 
-Dienstag {jack['tuesday']['date'].isoformat()}: {comb_tue:.1f} %
-Samstag {jack['saturday']['date'].isoformat()}: {comb_sat:.1f} %
-
-Vergleich: {cmp_text.replace('**', '')}
+Nächste 3 Ziehungen:
+""" + "\n".join(
+            f"  {dr['weekday_name']} {dr['date'].isoformat()}: Score {sc:.1f} % · Jackpot ≈ {dr['jackpot_mio']} Mio. € · Tipps ≈ {dr['tips_mio']} Mio."
+            for dr, sc in zip(draws, draw_scores)
+        ) + f"""
 
 Allgemeine Faktoren:
 {format_reasons(gen_reasons)}
@@ -670,7 +758,7 @@ with st.sidebar:
         Merkur Rx, Saturn, Part of Fortune,
         grobe 5./8./11.-Haus-Aktivierung.
 
-        **AstroWeather:** Score für Di- & Sa-Abend.
+        **AstroWeather:** nächste 3 Ziehungen (EJ oder 6aus49).
         **Verlauf:** 14 Tage ab Abfrage-Datum.
         """
     )
