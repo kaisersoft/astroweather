@@ -7,6 +7,7 @@ AstroLotto Score v3 – Experimentelles Scoring-System
 - Gewichtete Begründungen, Mond/Merkur-Badges
 - Profil-Historie, Export, Di-vs-Sa-Vergleich
 - Grobe Häuser-Näherung (ganz Zeichen)
+- Hochscore-Tabelle: alle Ziehungstage Rest des Jahres mit Score > 75 %
 
 NUR ZUR UNTERHALTUNG – keine Gewinngarantie.
 """
@@ -379,6 +380,53 @@ def next_n_draw_dates(from_date: date, weekdays: list[int], n: int = 3) -> list[
     return out
 
 
+def all_draw_dates_until_year_end(from_date: date, weekdays: list[int]) -> list[date]:
+    """Alle Ziehungsdaten ab from_date bis einschließlich 31.12. des Jahres."""
+    end = date(from_date.year, 12, 31)
+    out = []
+    d = from_date
+    while d <= end:
+        if d.weekday() in weekdays:
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def find_high_score_draws(
+    birth_dt: datetime,
+    lat: float,
+    lon: float,
+    lottery_mode: str,
+    from_date: date,
+    threshold: float = 75.0,
+) -> list[dict]:
+    """
+    Berechnet kombinierte Scores für alle verbleibenden Ziehungstage des Jahres
+    und liefert diejenigen mit Score > threshold (sortiert absteigend).
+    """
+    cfg = LOTTERY_CONFIG[lottery_mode]
+    draw_dates = all_draw_dates_until_year_end(from_date, cfg["weekdays"])
+    results = []
+    for d in draw_dates:
+        dr_dt = datetime.combine(
+            d,
+            datetime.strptime(f"{cfg['draw_hour']:02d}:00", "%H:%M").time(),
+        ).replace(tzinfo=timezone.utc)
+        g, _ = score_general(dr_dt)
+        p, _ = score_personal(birth_dt, dr_dt, lat, lon)
+        comb = (g + p) / 2.0
+        if comb > threshold:
+            results.append({
+                "date": d,
+                "weekday_name": cfg["weekday_names"].get(d.weekday(), d.strftime("%A")),
+                "score": round(comb, 1),
+                "general": round(g, 1),
+                "personal": round(p, 1),
+            })
+    results.sort(key=lambda x: (-x["score"], x["date"]))
+    return results
+
+
 def fetch_jackpots() -> dict:
     """
     Versucht aktuelle Jackpots von lotto.de zu lesen.
@@ -479,7 +527,7 @@ if "profiles" not in st.session_state:
     st.session_state.profiles = []
 
 st.title("🍀 AstroLotto Score")
-st.caption("v3 · skyfield · 14-Tage-Verlauf · AstroWeather Di/Sa · gewichtete Faktoren")
+st.caption("v3 · skyfield · 14-Tage-Verlauf · AstroWeather · Hochscore-Tage >75 % · gewichtete Faktoren")
 
 with st.expander("⚠️ Wichtiger Hinweis", expanded=False):
     st.markdown(
@@ -597,6 +645,11 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
             trend_dates.append(d.strftime("%d.%m."))
             trend_scores.append(round((g + p) / 2.0, 1))
 
+        # Hochscore-Ziehungstage Rest des Jahres (> 75 %)
+        high_score_draws = find_high_score_draws(
+            birth_dt, lat, lon, lottery_mode, query_date, threshold=75.0
+        )
+
     st.markdown("## Ergebnis")
 
     b1, b2, b3 = st.columns(3)
@@ -699,6 +752,44 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
         f"(rel. zum Abfrage-Datum)."
     )
 
+    st.markdown("---")
+    st.subheader(
+        f"Hochscore-Ziehungstage Rest {query_date.year} "
+        f"({LOTTERY_CONFIG[lottery_mode]['label']}, > 75 %)"
+    )
+    if high_score_draws:
+        df_high = pd.DataFrame(
+            [
+                {
+                    "Datum": r["date"].strftime("%d.%m.%Y"),
+                    "Wochentag": r["weekday_name"],
+                    "Kombiniert %": r["score"],
+                    "Allgemein %": r["general"],
+                    "Persönlich %": r["personal"],
+                    "Symbol": luck_symbol(r["score"]),
+                }
+                for r in high_score_draws
+            ]
+        )
+        st.dataframe(
+            df_high,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Kombiniert %": st.column_config.NumberColumn(format="%.1f"),
+                "Allgemein %": st.column_config.NumberColumn(format="%.1f"),
+                "Persönlich %": st.column_config.NumberColumn(format="%.1f"),
+            },
+        )
+        st.caption(
+            f"**{len(high_score_draws)}** Ziehungstag(e) mit kombiniertem Score > 75 % "
+            f"bis Jahresende gefunden (sortiert nach Score)."
+        )
+    else:
+        st.info(
+            "Keine Ziehungstage mit kombiniertem Score > 75 % im Rest des Jahres gefunden."
+        )
+
     with st.expander("Allgemeine Faktoren (gewichtet)"):
         st.text(format_reasons(gen_reasons))
     with st.expander("Persönliche Faktoren (gewichtet)"):
@@ -721,6 +812,17 @@ Nächste 3 Ziehungen:
 """ + "\n".join(
             f"  {dr['weekday_name']} {dr['date'].isoformat()}: Score {sc:.1f} % · Jackpot ≈ {dr['jackpot_mio']} Mio. € · Tipps ≈ {dr['tips_mio']} Mio."
             for dr, sc in zip(draws, draw_scores)
+        ) + f"""
+
+Hochscore-Ziehungstage Rest {query_date.year} (> 75 %):
+""" + (
+            "\n".join(
+                f"  {r['weekday_name']} {r['date'].isoformat()}: {r['score']:.1f} % "
+                f"(Allg. {r['general']:.1f} / Pers. {r['personal']:.1f})"
+                for r in high_score_draws
+            )
+            if high_score_draws
+            else "  (keine)"
         ) + f"""
 
 Allgemeine Faktoren:
@@ -760,6 +862,7 @@ with st.sidebar:
 
         **AstroWeather:** nächste 3 Ziehungen (EJ oder 6aus49).
         **Verlauf:** 14 Tage ab Abfrage-Datum.
+        **Hochscore:** alle Ziehungstage bis Jahresende mit kombiniertem Score **> 75 %**.
         """
     )
     st.markdown("---")
