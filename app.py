@@ -1392,6 +1392,84 @@ st.markdown(
     [data-testid="stAppViewContainer"] .stCaption {
         color: #64748b !important;
     }
+
+    /* ---------- RADIO BUTTONS (horizontal) ---------- */
+    div[data-testid="stRadio"] {
+        background-color: transparent !important;
+    }
+    div[data-testid="stRadio"] > div {
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 10px !important;
+        padding: 0.4rem 0.6rem !important;
+    }
+    div[data-testid="stRadio"] label {
+        background-color: transparent !important;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stRadio"] label p,
+    div[data-testid="stRadio"] label span,
+    div[data-testid="stRadio"] label div {
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        opacity: 1 !important;
+    }
+    /* radio circle itself */
+    div[data-testid="stRadio"] [data-baseweb="radio"],
+    div[data-testid="stRadio"] input[type="radio"] {
+        accent-color: #16a34a !important;
+    }
+
+    /* ---------- VEGA / ALTAIR / PLOTLY charts light ---------- */
+    [data-testid="stArrowVegaLiteChart"],
+    [data-testid="stVegaLiteChart"],
+    [data-testid="stAltairChart"],
+    .stVegaLiteChart,
+    .stAltairChart,
+    .vega-embed,
+    .vega-embed summary,
+    canvas.marks {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+    }
+    .vega-embed details,
+    .vega-embed summary {
+        background: #ffffff !important;
+        color: #0f172a !important;
+    }
+    /* Plotly */
+    .js-plotly-plot, .plotly, .plot-container {
+        background: #ffffff !important;
+    }
+
+    /* ---------- HTML tables (st.table) ---------- */
+    [data-testid="stTable"] table,
+    .stTable table {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border-collapse: collapse !important;
+        width: 100% !important;
+    }
+    [data-testid="stTable"] th,
+    .stTable th {
+        background-color: #f1f5f9 !important;
+        color: #1e293b !important;
+        font-weight: 600 !important;
+        padding: 0.6rem 0.75rem !important;
+        border-bottom: 1px solid #e2e8f0 !important;
+    }
+    [data-testid="stTable"] td,
+    .stTable td {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        padding: 0.55rem 0.75rem !important;
+        border-bottom: 1px solid #f1f5f9 !important;
+    }
+    [data-testid="stTable"] tr:hover td {
+        background-color: #f8fafc !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1673,9 +1751,30 @@ if calculate:
         unsafe_allow_html=True,
     )
     import pandas as pd
+    import altair as alt
 
-    df_trend = pd.DataFrame({"Datum": trend_dates, "Kombinierter Score %": trend_scores})
-    st.line_chart(df_trend.set_index("Datum"), height=220)
+    df_trend = pd.DataFrame({"Datum": trend_dates, "Score": trend_scores})
+    trend_chart = (
+        alt.Chart(df_trend)
+        .mark_line(point=True, color="#16a34a", strokeWidth=2.5)
+        .encode(
+            x=alt.X("Datum:N", title=None, axis=alt.Axis(labelColor="#475569", tickColor="#e2e8f0")),
+            y=alt.Y(
+                "Score:Q",
+                title="Score %",
+                scale=alt.Scale(domain=[0, 100]),
+                axis=alt.Axis(labelColor="#475569", gridColor="#e2e8f0", tickColor="#e2e8f0"),
+            ),
+            tooltip=["Datum", "Score"],
+        )
+        .properties(height=240)
+        .configure(
+            background="#ffffff",
+        )
+        .configure_view(strokeWidth=0, fill="#ffffff")
+        .configure_axis(grid=True, domainColor="#e2e8f0")
+    )
+    st.altair_chart(trend_chart, use_container_width=True)
     best_i = trend_scores.index(max(trend_scores))
     st.caption(
         f"Höchster Wert: **{trend_scores[best_i]} %** am {trend_dates[best_i]}"
@@ -1705,16 +1804,7 @@ if calculate:
                 for r in high_score_draws
             ]
         )
-        st.dataframe(
-            df_high,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Kombiniert %": st.column_config.NumberColumn(format="%.1f"),
-                "Allgemein %": st.column_config.NumberColumn(format="%.1f"),
-                "Persönlich %": st.column_config.NumberColumn(format="%.1f"),
-            },
-        )
+        st.table(df_high.set_index("Datum"))
         st.caption(f"**{len(high_score_draws)}** Tag(e) gefunden.")
 
         label_to_row = {
