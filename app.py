@@ -23,6 +23,7 @@ import streamlit as st
 from datetime import date, datetime, timedelta, timezone, time
 from zoneinfo import ZoneInfo
 import math
+import time as time_module
 
 from skyfield.api import load
 
@@ -907,10 +908,10 @@ def luck_symbol(score: float) -> str:
 
 def score_color(score: float) -> str:
     if score >= 70:
-        return "#2e7d32"
+        return "#4ade80"
     if score >= 50:
-        return "#f9a825"
-    return "#c62828"
+        return "#fbbf24"
+    return "#f87171"
 
 
 def next_n_draw_dates(from_date: date, weekdays: list[int], n: int = 3) -> list[date]:
@@ -1134,38 +1135,142 @@ def build_google_calendar_ics(
 if "profiles" not in st.session_state:
     st.session_state.profiles = []
 
-# Custom CSS – Clean Fortune (forced light widgets)
+# Splash screen: once per visit, ~2.7s
+if not st.session_state.get("splash_done"):
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"], [data-testid="stHeader"], [data-testid="stToolbar"] {
+            display: none !important;
+        }
+        .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+            background: #050508 !important;
+        }
+        .alsplash {
+            position: fixed; inset: 0; z-index: 999999;
+            background:
+                repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(0,229,255,0.06) 40px),
+                repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(0,229,255,0.06) 40px),
+                #050508;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-family: Inter, system-ui, sans-serif;
+        }
+        .alsplash-k { width: 220px; height: 220px; margin-bottom: 0.4rem;
+            filter: drop-shadow(0 0 18px rgba(0,229,255,0.55)); }
+        .alsplash-title {
+            font-size: 3.1rem; font-weight: 800; color: #ffffff; letter-spacing: -0.03em;
+            margin: 0.15rem 0 0 0; line-height: 1.05;
+        }
+        .alsplash-sub {
+            font-size: 1.05rem; font-weight: 700; color: #00e5ff;
+            letter-spacing: 0.42em; margin: 0.35rem 0 1.35rem 0;
+        }
+        .alsplash-badge {
+            display: inline-flex; align-items: center; gap: 0.55rem;
+            padding: 0.4rem 0.95rem 0.4rem 0.45rem; border-radius: 999px;
+            background: #0a0a0a; border: 1px solid rgba(0,229,255,0.4);
+            box-shadow: 0 0 14px rgba(0,229,255,0.18);
+            color: #e2e8f0; font-size: 0.95rem; font-weight: 500;
+        }
+        .alsplash-badge strong { color: #00e5ff; }
+        .alsplash-bar {
+            width: min(420px, 70vw); height: 8px; margin-top: 2.2rem;
+            background: #111827; border-radius: 999px; overflow: hidden;
+            box-shadow: 0 0 16px rgba(0,229,255,0.18);
+        }
+        .alsplash-bar > span {
+            display: block; height: 100%; width: 0;
+            background: linear-gradient(90deg, #00b8d4, #00e5ff);
+            border-radius: 999px;
+            animation: alsplash-load 2.5s ease-in-out forwards;
+        }
+        .alsplash-note { margin-top: 1.35rem; color: #64748b; font-size: 0.85rem; }
+        @keyframes alsplash-load { from { width: 0; } to { width: 100%; } }
+        </style>
+        <div class="alsplash">
+          <svg class="alsplash-k" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="48" cy="30" r="5" fill="#00E5FF"/>
+            <circle cx="48" cy="70" r="4.5" fill="#00E5FF"/>
+            <circle cx="48" cy="100" r="6" fill="#00E5FF"/>
+            <circle cx="48" cy="130" r="4.5" fill="#00E5FF"/>
+            <circle cx="48" cy="170" r="5" fill="#00E5FF"/>
+            <circle cx="78" cy="70" r="4" fill="#00E5FF"/>
+            <circle cx="95" cy="55" r="3.5" fill="#00E5FF"/>
+            <circle cx="112" cy="40" r="4.5" fill="#00E5FF"/>
+            <circle cx="135" cy="28" r="5" fill="#00E5FF"/>
+            <circle cx="78" cy="130" r="4" fill="#00E5FF"/>
+            <circle cx="95" cy="145" r="3.5" fill="#00E5FF"/>
+            <circle cx="112" cy="160" r="4.5" fill="#00E5FF"/>
+            <circle cx="135" cy="172" r="5" fill="#00E5FF"/>
+            <circle cx="70" cy="100" r="3.5" fill="#00E5FF"/>
+            <circle cx="100" cy="100" r="5" fill="#00E5FF"/>
+            <g stroke="#00E5FF" stroke-width="1.4" stroke-linecap="round" opacity="0.9">
+              <line x1="48" y1="30" x2="48" y2="70"/>
+              <line x1="48" y1="70" x2="48" y2="100"/>
+              <line x1="48" y1="100" x2="48" y2="130"/>
+              <line x1="48" y1="130" x2="48" y2="170"/>
+              <line x1="48" y1="100" x2="70" y2="100"/>
+              <line x1="70" y1="100" x2="100" y2="100"/>
+              <line x1="48" y1="70" x2="78" y2="70"/>
+              <line x1="78" y1="70" x2="95" y2="55"/>
+              <line x1="95" y1="55" x2="112" y2="40"/>
+              <line x1="112" y1="40" x2="135" y2="28"/>
+              <line x1="48" y1="100" x2="95" y2="55"/>
+              <line x1="100" y1="100" x2="112" y2="40"/>
+              <line x1="48" y1="130" x2="78" y2="130"/>
+              <line x1="78" y1="130" x2="95" y2="145"/>
+              <line x1="95" y1="145" x2="112" y2="160"/>
+              <line x1="112" y1="160" x2="135" y2="172"/>
+              <line x1="48" y1="100" x2="95" y2="145"/>
+              <line x1="100" y1="100" x2="112" y2="160"/>
+            </g>
+          </svg>
+          <div class="alsplash-title">AstroLotto</div>
+          <div class="alsplash-sub">SCORE</div>
+          <div class="alsplash-badge">
+            Made by <strong>Kaisersoft.ai</strong>
+          </div>
+          <div class="alsplash-bar"><span></span></div>
+          <div class="alsplash-note">Nur zur Unterhaltung · keine Gewinngarantie</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    time_module.sleep(2.7)
+    st.session_state.splash_done = True
+    st.rerun()
+
+# Custom CSS – Dark Fortune (white on black)
 st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    /* Prevent browser/OS dark mode from forcing dark form controls */
     :root, html, body, .stApp {
-        color-scheme: light only !important;
+        color-scheme: dark only !important;
     }
 
-    /* ---------- Global light surface ---------- */
     html, body, .stApp, [data-testid="stAppViewContainer"],
     [data-testid="stHeader"], [data-testid="stToolbar"] {
-        background-color: #f8fafc !important;
-        color: #0f172a !important;
+        background-color: #050508 !important;
+        color: #f8fafc !important;
         font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
     }
     [data-testid="stHeader"] {
-        background: #ffffff !important;
+        background: #050508 !important;
+    }
+    [data-testid="stToolbar"] {
+        color: #e2e8f0 !important;
     }
 
-    /* ---------- Sidebar shell ---------- */
     section[data-testid="stSidebar"],
     section[data-testid="stSidebar"] > div,
     [data-testid="stSidebarContent"] {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-        border-right: 1px solid #e2e8f0 !important;
+        background-color: #0a0a0f !important;
+        color: #f8fafc !important;
+        border-right: 1px solid #1e293b !important;
     }
 
-    /* All sidebar text readable */
     section[data-testid="stSidebar"] p,
     section[data-testid="stSidebar"] span,
     section[data-testid="stSidebar"] label,
@@ -1174,15 +1279,14 @@ st.markdown(
     section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
     section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
     section[data-testid="stSidebar"] small {
-        color: #0f172a !important;
+        color: #f1f5f9 !important;
         opacity: 1 !important;
     }
     section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
     section[data-testid="stSidebar"] .stCaption {
-        color: #64748b !important;
+        color: #94a3b8 !important;
     }
 
-    /* ---------- INPUTS: date / time / text / number ---------- */
     section[data-testid="stSidebar"] input,
     section[data-testid="stSidebar"] textarea,
     [data-testid="stAppViewContainer"] input,
@@ -1195,44 +1299,41 @@ st.markdown(
     .stTimeInput input,
     .stTextInput input,
     .stNumberInput input {
-        background-color: #ffffff !important;
-        background: #ffffff !important;
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
-        caret-color: #0f172a !important;
-        border: 1px solid #cbd5e1 !important;
+        background-color: #111827 !important;
+        background: #111827 !important;
+        color: #f8fafc !important;
+        -webkit-text-fill-color: #f8fafc !important;
+        caret-color: #00e5ff !important;
+        border: 1px solid #334155 !important;
         border-radius: 8px !important;
         opacity: 1 !important;
     }
-    /* Baseweb wraps often set dark bg on parent */
     section[data-testid="stSidebar"] div[data-baseweb="input"],
     section[data-testid="stSidebar"] div[data-baseweb="base-input"],
     section[data-testid="stSidebar"] .stDateInput > div > div,
     section[data-testid="stSidebar"] .stTimeInput > div > div,
     section[data-testid="stSidebar"] .stTextInput > div > div {
-        background-color: #ffffff !important;
-        background: #ffffff !important;
-        border-color: #cbd5e1 !important;
-        color: #0f172a !important;
+        background-color: #111827 !important;
+        background: #111827 !important;
+        border-color: #334155 !important;
+        color: #f8fafc !important;
     }
 
-    /* ---------- SELECT / MULTISELECT ---------- */
     div[data-baseweb="select"] > div,
     section[data-testid="stSidebar"] div[data-baseweb="select"] > div,
     .stSelectbox div[data-baseweb="select"] > div,
     .stMultiSelect div[data-baseweb="select"] > div {
-        background-color: #ffffff !important;
-        background: #ffffff !important;
-        color: #0f172a !important;
-        border-color: #cbd5e1 !important;
+        background-color: #111827 !important;
+        background: #111827 !important;
+        color: #f8fafc !important;
+        border-color: #334155 !important;
         border-radius: 8px !important;
     }
     div[data-baseweb="select"] span,
     div[data-baseweb="select"] div {
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
+        color: #f8fafc !important;
+        -webkit-text-fill-color: #f8fafc !important;
     }
-    /* Dropdown popover menu */
     div[data-baseweb="popover"],
     div[data-baseweb="popover"] > div,
     ul[role="listbox"],
@@ -1240,164 +1341,153 @@ st.markdown(
     div[role="listbox"],
     li[role="option"],
     div[role="option"] {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
+        background-color: #0f172a !important;
+        color: #f8fafc !important;
     }
     li[role="option"]:hover,
     div[role="option"]:hover {
-        background-color: #f1f5f9 !important;
-        color: #0f172a !important;
+        background-color: #1e293b !important;
+        color: #f8fafc !important;
     }
-    /* Multiselect chips */
     span[data-baseweb="tag"],
     [data-baseweb="tag"] {
-        background-color: #ecfdf5 !important;
-        color: #14532d !important;
+        background-color: #042f2e !important;
+        color: #5eead4 !important;
     }
 
-    /* ---------- RADIO / CHECKBOX ---------- */
     .stRadio label,
     .stCheckbox label,
     section[data-testid="stSidebar"] .stRadio label,
     section[data-testid="stSidebar"] .stCheckbox label {
-        color: #0f172a !important;
+        color: #f8fafc !important;
         opacity: 1 !important;
     }
 
-    /* ---------- BUTTONS ---------- */
     .stButton > button[kind="primary"],
     section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-        background-color: #16a34a !important;
-        border: 1px solid #16a34a !important;
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
+        background-color: #00c4d4 !important;
+        border: 1px solid #00e5ff !important;
+        color: #050508 !important;
+        -webkit-text-fill-color: #050508 !important;
         font-weight: 600 !important;
     }
     .stButton > button[kind="primary"]:hover {
-        background-color: #15803d !important;
-        border-color: #15803d !important;
-        color: #ffffff !important;
+        background-color: #00e5ff !important;
+        border-color: #67f6ff !important;
+        color: #050508 !important;
     }
-    /* lottery / secondary buttons – force white */
     section[data-testid="stSidebar"] .stButton > button {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
-        border: 1px solid #e2e8f0 !important;
+        background-color: #111827 !important;
+        color: #f8fafc !important;
+        -webkit-text-fill-color: #f8fafc !important;
+        border: 1px solid #334155 !important;
         border-radius: 10px !important;
     }
     section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-        background-color: #16a34a !important;
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        border: 1px solid #16a34a !important;
+        background-color: #00c4d4 !important;
+        color: #050508 !important;
+        -webkit-text-fill-color: #050508 !important;
+        border: 1px solid #00e5ff !important;
     }
-        .stButton > button:not([kind="primary"]) {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
-        border: 1px solid #e2e8f0 !important;
+    .stButton > button:not([kind="primary"]) {
+        background-color: #111827 !important;
+        color: #f8fafc !important;
+        -webkit-text-fill-color: #f8fafc !important;
+        border: 1px solid #334155 !important;
     }
     .stDownloadButton > button {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
-        border: 1px solid #e2e8f0 !important;
+        background-color: #111827 !important;
+        color: #f8fafc !important;
+        -webkit-text-fill-color: #f8fafc !important;
+        border: 1px solid #334155 !important;
     }
     .stDownloadButton > button[kind="primary"] {
-        background-color: #16a34a !important;
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        border-color: #16a34a !important;
+        background-color: #00c4d4 !important;
+        color: #050508 !important;
+        -webkit-text-fill-color: #050508 !important;
+        border-color: #00e5ff !important;
     }
 
-    /* ---------- DATAFRAME / TABLE ---------- */
     [data-testid="stDataFrame"],
     [data-testid="stDataFrame"] *,
     [data-testid="stDataFrameResizable"],
     .stDataFrame {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
+        background-color: #0b1220 !important;
+        color: #f8fafc !important;
     }
     [data-testid="stDataFrame"] [role="gridcell"],
     [data-testid="stDataFrame"] [role="columnheader"] {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-        border-color: #e2e8f0 !important;
+        background-color: #0b1220 !important;
+        color: #f8fafc !important;
+        border-color: #1e293b !important;
     }
     [data-testid="stDataFrame"] [role="columnheader"] {
-        background-color: #f1f5f9 !important;
-        color: #1e293b !important;
+        background-color: #111827 !important;
+        color: #e2e8f0 !important;
         font-weight: 600 !important;
     }
 
-    /* ---------- EXPANDER / ALERT ---------- */
     [data-testid="stExpander"] {
-        background-color: #ffffff !important;
-        border: 1px solid #e2e8f0 !important;
+        background-color: #0b1220 !important;
+        border: 1px solid #1e293b !important;
         border-radius: 12px !important;
-        color: #0f172a !important;
+        color: #f8fafc !important;
     }
     [data-testid="stExpander"] * {
-        color: #0f172a !important;
+        color: #f8fafc !important;
     }
     div[data-testid="stAlert"] {
-        background-color: #eff6ff !important;
-        color: #1e3a8a !important;
-        border: 1px solid #bfdbfe !important;
+        background-color: #0b1b33 !important;
+        color: #bfdbfe !important;
+        border: 1px solid #1e3a8a !important;
     }
     div[data-testid="stAlert"] * {
-        color: #1e3a8a !important;
+        color: #bfdbfe !important;
     }
 
-    /* ---------- Custom cards (metric / weather / pills) ---------- */
     .cf-metric {
-        background: #ffffff !important;
+        background: #0b1220 !important;
         border-radius: 16px;
         padding: 1.25rem 1.35rem;
-        box-shadow: 0 1px 3px rgba(15,23,42,0.08);
+        box-shadow: 0 0 20px rgba(0, 229, 255, 0.06);
+        border: 1px solid #1e293b;
         border-top: 3px solid #22c55e;
         text-align: left;
         min-height: 110px;
-        color: #0f172a !important;
+        color: #f8fafc !important;
     }
     .cf-metric.amber { border-top-color: #f59e0b; }
     .cf-metric.green { border-top-color: #22c55e; }
     .cf-metric.red { border-top-color: #ef4444; }
-    .cf-metric .label { font-size: 0.8rem !important; color: #64748b !important; font-weight: 500 !important; }
+    .cf-metric .label { font-size: 0.8rem !important; color: #94a3b8 !important; font-weight: 500 !important; }
     .cf-metric .value { font-size: 2rem !important; font-weight: 800 !important; letter-spacing: -0.03em; line-height: 1.15; }
-    .cf-metric .sub { font-size: 0.75rem !important; color: #64748b !important; margin-top: 0.35rem; }
+    .cf-metric .sub { font-size: 0.75rem !important; color: #94a3b8 !important; margin-top: 0.35rem; }
 
     .cf-pills { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0 1.25rem 0; }
     .cf-pill {
         display: inline-flex; align-items: center; gap: 0.35rem;
-        background: #ffffff !important; border: 1px solid #e2e8f0 !important;
+        background: #0b1220 !important; border: 1px solid #334155 !important;
         border-radius: 999px; padding: 0.35rem 0.85rem;
-        font-size: 0.8rem !important; font-weight: 500 !important; color: #1e293b !important;
+        font-size: 0.8rem !important; font-weight: 500 !important; color: #e2e8f0 !important;
     }
-    .cf-pill.ok { border-color: #86efac !important; background: #f0fdf4 !important; color: #14532d !important; }
-    .cf-pill.warn { border-color: #fcd34d !important; background: #fffbeb !important; color: #78350f !important; }
-    .cf-pill.bad { border-color: #fca5a5 !important; background: #fef2f2 !important; color: #7f1d1d !important; }
+    .cf-pill.ok { border-color: #166534 !important; background: #052e16 !important; color: #86efac !important; }
+    .cf-pill.warn { border-color: #854d0e !important; background: #1c1408 !important; color: #fde68a !important; }
+    .cf-pill.bad { border-color: #7f1d1d !important; background: #1c0a0a !important; color: #fca5a5 !important; }
 
     .cf-weather {
-        background: #ffffff !important; border-radius: 14px; padding: 1.1rem 1rem;
-        box-shadow: 0 1px 3px rgba(15,23,42,0.08); border: 1px solid #e2e8f0 !important;
-        text-align: center; min-height: 140px; color: #0f172a !important;
+        background: #0b1220 !important; border-radius: 14px; padding: 1.1rem 1rem;
+        box-shadow: 0 0 16px rgba(0, 229, 255, 0.05); border: 1px solid #1e293b !important;
+        text-align: center; min-height: 140px; color: #f8fafc !important;
     }
-    .cf-weather .wd { font-size: 0.75rem !important; color: #475569 !important; font-weight: 500 !important; }
+    .cf-weather .wd { font-size: 0.75rem !important; color: #94a3b8 !important; font-weight: 500 !important; }
     .cf-weather .sc { font-size: 1.5rem !important; font-weight: 800 !important; margin: 0.35rem 0; }
-    .cf-weather .tag { font-size: 0.8rem !important; color: #475569 !important; }
-    .cf-weather .jp { font-size: 0.75rem !important; color: #64748b !important; margin-top: 0.4rem; }
+    .cf-weather .tag { font-size: 0.8rem !important; color: #cbd5e1 !important; }
+    .cf-weather .jp { font-size: 0.75rem !important; color: #94a3b8 !important; margin-top: 0.4rem; }
 
-    .cf-section { font-size: 1.05rem !important; font-weight: 700 !important; color: #0f172a !important; margin: 1.5rem 0 0.35rem 0; }
-    .cf-section-sub { font-size: 0.85rem !important; color: #475569 !important; margin-bottom: 0.85rem; }
-    .cf-made-by {
-        margin-bottom: 0.85rem;
-    }
-    .cf-made-by-sidebar {
-        margin-bottom: 0;
-        margin-top: 0.15rem;
-    }
+    .cf-section { font-size: 1.05rem !important; font-weight: 700 !important; color: #f8fafc !important; margin: 1.5rem 0 0.35rem 0; }
+    .cf-section-sub { font-size: 0.85rem !important; color: #94a3b8 !important; margin-bottom: 0.85rem; }
+    .cf-made-by { margin-bottom: 0.85rem; }
+    .cf-made-by-sidebar { margin-bottom: 0; margin-top: 0.15rem; }
     .cf-made-by-sidebar .cf-made-link {
         width: 100%;
         box-sizing: border-box;
@@ -1443,52 +1533,46 @@ st.markdown(
         font-weight: 700 !important;
     }
 
-    .cf-hero-title { font-size: 1.5rem !important; font-weight: 800 !important; color: #0f172a !important; letter-spacing: -0.03em; margin-bottom: 0.15rem; }
-    .cf-hero-sub { font-size: 0.9rem !important; color: #475569 !important; margin-bottom: 1.25rem; }
-    .cf-logo-title { font-weight: 800 !important; font-size: 1.2rem !important; color: #0f172a !important; letter-spacing: -0.02em; }
-    .cf-logo-sub { font-size: 0.7rem !important; color: #16a34a !important; font-weight: 600 !important; letter-spacing: 0.04em; }
+    .cf-hero-title { font-size: 1.5rem !important; font-weight: 800 !important; color: #f8fafc !important; letter-spacing: -0.03em; margin-bottom: 0.15rem; }
+    .cf-hero-sub { font-size: 0.9rem !important; color: #94a3b8 !important; margin-bottom: 1.25rem; }
+    .cf-logo-title { font-weight: 800 !important; font-size: 1.2rem !important; color: #f8fafc !important; letter-spacing: -0.02em; }
+    .cf-logo-sub { font-size: 0.7rem !important; color: #00e5ff !important; font-weight: 600 !important; letter-spacing: 0.04em; }
 
-    /* Main markdown text */
     [data-testid="stAppViewContainer"] .stMarkdown p,
     [data-testid="stAppViewContainer"] .stMarkdown span,
     [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"] {
-        color: #0f172a !important;
+        color: #e2e8f0 !important;
     }
     [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"],
     [data-testid="stAppViewContainer"] .stCaption {
-        color: #64748b !important;
+        color: #94a3b8 !important;
     }
 
-    /* ---------- RADIO BUTTONS (horizontal) ---------- */
-    div[data-testid="stRadio"] {
-        background-color: transparent !important;
-    }
+    div[data-testid="stRadio"] { background-color: transparent !important; }
     div[data-testid="stRadio"] > div {
-        background-color: #ffffff !important;
-        border: 1px solid #e2e8f0 !important;
+        background-color: #111827 !important;
+        border: 1px solid #334155 !important;
         border-radius: 10px !important;
         padding: 0.4rem 0.6rem !important;
     }
     div[data-testid="stRadio"] label {
         background-color: transparent !important;
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
+        color: #f8fafc !important;
+        -webkit-text-fill-color: #f8fafc !important;
         opacity: 1 !important;
     }
     div[data-testid="stRadio"] label p,
     div[data-testid="stRadio"] label span,
     div[data-testid="stRadio"] label div {
-        color: #0f172a !important;
-        -webkit-text-fill-color: #0f172a !important;
+        color: #f8fafc !important;
+        -webkit-text-fill-color: #f8fafc !important;
         opacity: 1 !important;
     }
-    /* radio circle itself */
     div[data-testid="stRadio"] [data-baseweb="radio"],
     div[data-testid="stRadio"] input[type="radio"] {
-        accent-color: #16a34a !important;
+        accent-color: #00e5ff !important;
     }
 
-    /* ---------- VEGA / ALTAIR / PLOTLY charts light ---------- */
     [data-testid="stArrowVegaLiteChart"],
     [data-testid="stVegaLiteChart"],
     [data-testid="stAltairChart"],
@@ -1497,45 +1581,45 @@ st.markdown(
     .vega-embed,
     .vega-embed summary,
     canvas.marks {
-        background-color: #ffffff !important;
-        background: #ffffff !important;
+        background-color: #050508 !important;
+        background: #050508 !important;
     }
     .vega-embed details,
     .vega-embed summary {
-        background: #ffffff !important;
-        color: #0f172a !important;
+        background: #050508 !important;
+        color: #f8fafc !important;
     }
-    /* Plotly */
     .js-plotly-plot, .plotly, .plot-container {
-        background: #ffffff !important;
+        background: #050508 !important;
     }
 
-    /* ---------- HTML tables (st.table) ---------- */
     [data-testid="stTable"] table,
     .stTable table {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
+        background-color: #0b1220 !important;
+        color: #f8fafc !important;
         border-collapse: collapse !important;
         width: 100% !important;
     }
     [data-testid="stTable"] th,
     .stTable th {
-        background-color: #f1f5f9 !important;
-        color: #1e293b !important;
+        background-color: #111827 !important;
+        color: #e2e8f0 !important;
         font-weight: 600 !important;
         padding: 0.6rem 0.75rem !important;
-        border-bottom: 1px solid #e2e8f0 !important;
+        border-bottom: 1px solid #1e293b !important;
     }
     [data-testid="stTable"] td,
     .stTable td {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
+        background-color: #0b1220 !important;
+        color: #f8fafc !important;
         padding: 0.55rem 0.75rem !important;
-        border-bottom: 1px solid #f1f5f9 !important;
+        border-bottom: 1px solid #1e293b !important;
     }
     [data-testid="stTable"] tr:hover td {
-        background-color: #f8fafc !important;
+        background-color: #111827 !important;
     }
+
+    hr { border-color: #1e293b !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1658,13 +1742,13 @@ with st.sidebar:
             default_btime = datetime.strptime(p["birth_time"], "%H:%M").time()
             default_city = p["city"]
         else:
-            default_bdate = date(1990, 5, 15)
-            default_btime = datetime.strptime("12:00", "%H:%M").time()
-            default_city = "Berlin"
+            default_bdate = date(1980, 12, 12)
+            default_btime = datetime.strptime("04:59", "%H:%M").time()
+            default_city = "Bonn"
     else:
-        default_bdate = date(1990, 5, 15)
-        default_btime = datetime.strptime("12:00", "%H:%M").time()
-        default_city = "Berlin"
+        default_bdate = date(1980, 12, 12)
+        default_btime = datetime.strptime("04:59", "%H:%M").time()
+        default_city = "Bonn"
 
     birth_date = st.date_input("Geburtsdatum", value=default_bdate)
     birth_time = st.time_input("Geburtszeit", value=default_btime)
@@ -1674,7 +1758,7 @@ with st.sidebar:
     try:
         default_idx = city_names.index(default_city)
     except ValueError:
-        default_idx = city_names.index("Berlin")
+        default_idx = city_names.index("Bonn")
     city_choice = st.selectbox("Geburtsort (Stadt)", city_names, index=default_idx)
     lat, lon, tz_name = CITY_DATA[city_choice]
     st.caption(f"{lat:.2f}°, {lon:.2f}° · {tz_name}")
@@ -1940,19 +2024,19 @@ if st.session_state.get("results"):
         alt.Chart(df_trend)
         .mark_line(point=True, color="#16a34a", strokeWidth=2.5)
         .encode(
-            x=alt.X("Datum:N", title=None, axis=alt.Axis(labelColor="#475569", tickColor="#e2e8f0")),
+            x=alt.X("Datum:N", title=None, axis=alt.Axis(labelColor="#94a3b8", tickColor="#1e293b")),
             y=alt.Y(
                 "Score:Q",
                 title="Score %",
                 scale=alt.Scale(domain=[0, 100]),
-                axis=alt.Axis(labelColor="#475569", gridColor="#e2e8f0", tickColor="#e2e8f0"),
+                axis=alt.Axis(labelColor="#94a3b8", gridColor="#1e293b", tickColor="#1e293b"),
             ),
             tooltip=["Datum", "Score"],
         )
         .properties(height=240)
-        .configure(background="#ffffff")
-        .configure_view(strokeWidth=0, fill="#ffffff")
-        .configure_axis(grid=True, domainColor="#e2e8f0")
+        .configure(background="#050508")
+        .configure_view(strokeWidth=0, fill="#050508")
+        .configure_axis(grid=True, domainColor="#1e293b")
     )
     st.altair_chart(trend_chart, use_container_width=True)
     best_i = trend_scores.index(max(trend_scores))
