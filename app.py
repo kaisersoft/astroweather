@@ -13,6 +13,9 @@ AstroLotto Score v5 – Clean Fortune UI
 - Sekundärprogressiver Mond + progressiver ASC
 - Solar Return (vereinfacht)
 - AstroWeather, 14-Tage-Verlauf, Hochscore >75 %
+- Sonnen-/Mondfinsternisse (Knotenorb, 3-Tage-Fenster)
+- Abgabefrist + Countdown (heutige Tippabgabe)
+- Ephemeriden-Cache
 - Google-Kalender-Export (.ics, Erinnerung 09:00)
 - UI: Clean Fortune Dashboard (Sidebar + Metric-Cards)
 
@@ -26,6 +29,7 @@ import math
 import random
 import time as time_module
 
+import streamlit.components.v1 as components
 from skyfield.api import load
 
 ts = load.timescale()
@@ -167,20 +171,51 @@ CITY_DATA = {
 # Astronomische Hilfsfunktionen
 # ---------------------------------------------------------------------------
 
+_LON_CACHE: dict = {}
+_SPEED_CACHE: dict = {}
+_VOC_CACHE: dict = {}
+_ECLIPSE_CACHE: dict = {}
+_CACHE_MAX = 12000
+
+
+def _utc_bucket(dt: datetime, seconds: int) -> int:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.astimezone(timezone.utc).timestamp() // seconds * seconds)
+
+
+def _cache_put(store: dict, key, value):
+    store[key] = value
+    if len(store) > _CACHE_MAX:
+        for i, k in enumerate(list(store.keys())):
+            if i % 2 == 0:
+                del store[k]
+    return value
+
+
 def ecliptic_longitude(body_name: str, dt: datetime) -> float:
+    bucket = 300 if body_name == "moon" else 600
+    key = (body_name, _utc_bucket(dt, bucket))
+    hit = _LON_CACHE.get(key)
+    if hit is not None:
+        return hit
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     t = ts.from_datetime(dt)
     astrometric = planets["earth"].at(t).observe(planets[body_name])
     _, lon, _ = astrometric.ecliptic_latlon()
-    return lon.degrees % 360.0
+    return _cache_put(_LON_CACHE, key, lon.degrees % 360.0)
 
 
 def planet_speed(body_name: str, dt: datetime, hours: float = 6.0) -> float:
+    key = (body_name, _utc_bucket(dt, 600), hours)
+    hit = _SPEED_CACHE.get(key)
+    if hit is not None:
+        return hit
     lon0 = ecliptic_longitude(body_name, dt)
     lon1 = ecliptic_longitude(body_name, dt + timedelta(hours=hours))
     delta = (lon1 - lon0 + 180) % 360 - 180
-    return delta * (24.0 / hours)
+    return _cache_put(_SPEED_CACHE, key, delta * (24.0 / hours))
 
 
 def norm_deg(deg: float) -> float:
@@ -381,6 +416,9 @@ def house_ruler_porphyry(house_num: int, cusps: list[float]) -> str:
 
 
 def is_void_of_course(dt: datetime, major_orbs: dict | None = None) -> bool:
+    voc_key = _utc_bucket(dt, 600)
+    if major_orbs is None and voc_key in _VOC_CACHE:
+        return _VOC_CACHE[voc_key]
     if major_orbs is None:
         major_orbs = {
             "sun": 8.0, "mercury": 7.0, "venus": 7.0, "mars": 7.0,
@@ -406,8 +444,8 @@ def is_void_of_course(dt: datetime, major_orbs: dict | None = None) -> bool:
             orb = major_orbs[body]
             for asp in aspects:
                 if is_aspect(m, b, asp, orb):
-                    return False
-    return True
+                    return _cache_put(_VOC_CACHE, voc_key, False)
+    return _cache_put(_VOC_CACHE, voc_key, True)
 
 
 def get_day_ruler(dt: datetime) -> tuple[str, str]:
@@ -450,6 +488,159 @@ def dampen_score(raw: float) -> float:
         return raw
     excess = raw - 70
     return 70 + excess * (0.75 - 0.15 * (excess / 30.0))
+
+
+# ---------------------------------------------------------------------------
+# Finsternisse
+# ---------------------------------------------------------------------------
+
+def _node_orb(lon: float, node: float) -> float:
+    return min(angle_diff(lon, node), angle_diff(lon, norm_deg(node + 180.0)))
+
+
+def eclipse_at(dt: datetime) -> dict | None:
+    """Solar/Lunar-Eklipse am Zeitpunkt, falls Lunation knotengebunden ist."""
+    sun = ecliptic_longitude("sun", dt)
+    moon = ecliptic_longitude("moon", dt)
+    node = mean_north_node(dt)
+    elong = angle_diff(sun, moon)
+    sun_node = _node_orb(sun, node)
+    moon_node = _node_orb(moon, node)
+    if elong <= 1.5 and sun_node <= 18.0:
+        return {
+            "kind": "solar",
+            "label": "Sonnenfinsternis",
+            "axis": sun,
+            "node_orb": sun_node,
+        }
+    if abs(elong - 180.0) <= 1.5 and min(sun_node, moon_node) <= 18.0:
+        return {
+            "kind": "lunar",
+            "label": "Mondfinsternis",
+            "axis": moon,
+            "node_orb": min(sun_node, moon_node),
+        }
+    return None
+
+
+def _eclipse_strength(node_orb: float) -> tuple[float, str]:
+    if node_orb <= 5.0:
+        return 1.0, "stark"
+    if node_orb <= 12.0:
+        return 0.7, "mittel"
+    return 0.4, "schwach"
+
+
+def _eclipse_decay(hours: float) -> float:
+    ah = abs(hours)
+    if ah <= 12:
+        return 1.0
+    if ah <= 24:
+        return 0.6
+    if ah <= 72:
+        return 0.3
+    return 0.0
+
+
+def nearest_eclipse(dt: datetime, max_hours: int = 72) -> dict | None:
+    """Nächste Eklipse im ±3-Tage-Fenster (stündlich gerastert, gecacht)."""
+    key = _utc_bucket(dt, 3600)
+    if key in _ECLIPSE_CACHE:
+        return _ECLIPSE_CACHE[key]
+    best = None
+    best_abs = 10**9
+    for hours in range(-max_hours, max_hours + 1, 2):
+        info = eclipse_at(dt + timedelta(hours=hours))
+        if not info:
+            continue
+        if abs(hours) < best_abs:
+            best_abs = abs(hours)
+            strength, strength_label = _eclipse_strength(info["node_orb"])
+            decay = _eclipse_decay(hours)
+            best = {
+                **info,
+                "hours": hours,
+                "when": dt + timedelta(hours=hours),
+                "strength": strength,
+                "strength_label": strength_label,
+                "decay": decay,
+            }
+            if hours == 0:
+                break
+    return _cache_put(_ECLIPSE_CACHE, key, best)
+
+
+def apply_eclipse_general(dt, positions, speeds, cusps, pof, add) -> dict | None:
+    info = nearest_eclipse(dt)
+    if not info or info["decay"] <= 0:
+        return info
+    axis = info["axis"]
+    w = info["strength"] * info["decay"]
+    luck = False
+    for body in ("jupiter", "uranus", "venus"):
+        if is_aspect(axis, positions[body], 0, 6) or is_aspect(axis, positions[body], 120, 7):
+            luck = True
+            break
+    if is_aspect(axis, pof, 0, 5) or is_aspect(axis, pof, 120, 6):
+        luck = True
+
+    saturn_hard = is_aspect(axis, positions["saturn"], 90, 6) or is_aspect(
+        axis, positions["saturn"], 180, 6
+    )
+    h = house_of_longitude(axis, cusps)
+    pts = 0.0
+    if info["kind"] == "solar":
+        pts = (5.0 if luck else -2.0) * w
+    else:
+        if luck:
+            pts = 4.0 * w
+        elif saturn_hard:
+            pts = -5.0 * w
+        else:
+            pts = 0.0
+    if h in (5, 8, 11):
+        pts += 4.0 * w
+    if is_aspect(axis, positions["uranus"], 0, 5) or is_aspect(axis, positions["north_node"], 0, 5):
+        applying = is_applying(
+            positions["uranus"], speeds.get("uranus", 0), axis, 0.0, 0
+        )
+        if applying:
+            pts += 3.0 * w
+
+    pts = max(-8.0, min(10.0, pts))
+    if abs(pts) >= 0.5:
+        side = "anwendend" if info["hours"] <= 0 else "scheidend"
+        add(
+            round(pts),
+            f"{info['label']} ({info['strength_label']}, {side}, Knoten {info['node_orb']:.1f}°)",
+        )
+    return info
+
+
+def apply_eclipse_personal(query_dt, natal: dict, add) -> dict | None:
+    info = nearest_eclipse(query_dt)
+    if not info or info["decay"] <= 0:
+        return info
+    axis = info["axis"]
+    w = info["strength"] * info["decay"]
+
+    def hit(lon, orb=5.0):
+        return is_aspect(axis, lon, 0, orb) or is_aspect(axis, lon, 180, orb)
+
+    if hit(natal["sun"]) or hit(natal["moon"]) or hit(natal["asc"]):
+        add(round(10 * w), f"{info['label']} auf radix Sonne/Mond/ASC")
+    if hit(natal["mercury"]):
+        add(round(9 * w), f"{info['label']} auf radix Merkur (Tickets/Zahlen)")
+    if hit(natal["jupiter"]) or hit(natal["venus"]) or hit(natal["pof"]):
+        add(round(12 * w), f"{info['label']} auf radix Jupiter/Venus/PoF")
+    if hit(natal["uranus"]) or hit(natal["node"]):
+        add(round(8 * w), f"{info['label']} auf radix Uranus/Nordknoten")
+    if hit(natal["saturn"]) or (
+        is_aspect(axis, natal["pof"], 90, 5) or is_aspect(axis, natal["pof"], 180, 5)
+    ):
+        if is_aspect(axis, natal["saturn"], 90, 5) or is_aspect(axis, natal["saturn"], 180, 5):
+            add(round(-8 * w), f"{info['label']} hart zu radix Saturn")
+    return info
 
 
 # ---------------------------------------------------------------------------
@@ -643,14 +834,16 @@ def score_general(dt: datetime, lat: float = 50.0, lon: float = 10.0):
     if is_aspect(uranus, venus, 0, 6):
         add(9, "Uranus–Venus (unerwarteter Geldfluss)")
 
-    # Mondphase
+    # Mondphase (Voll-/Neumond-Bonus entfällt bei Eklipse, keine Doppelzählung)
+    eclipse_near = nearest_eclipse(dt)
     phase = moon_phase_fraction(dt)
     if 0.1 < phase < 0.45:
         add(7, "Zunehmender Mond")
     elif 0.55 < phase < 0.9:
         add(-4, "Abnehmender Mond")
-    if abs(phase - 0.5) < 0.04:
-        add(5, "Nahe Vollmond")
+    if eclipse_near is None or eclipse_near.get("decay", 0) <= 0:
+        if abs(phase - 0.5) < 0.04:
+            add(5, "Nahe Vollmond")
 
     if is_void_of_course(dt):
         add(-12, "Mond Void of Course (ungünstig für neue Unternehmungen)")
@@ -752,6 +945,8 @@ def score_general(dt: datetime, lat: float = 50.0, lon: float = 10.0):
     # Aspektmuster
     for desc, pts in detect_aspect_patterns(positions, speeds):
         add(pts, desc)
+
+    apply_eclipse_general(dt, positions, speeds, cusps, pof, add)
 
     points = dampen_score(max(0.0, min(100.0, points)))
     return points, reasons
@@ -891,6 +1086,23 @@ def score_personal(birth_dt, query_dt, lat, lon):
     except Exception:
         pass
 
+    apply_eclipse_personal(
+        query_dt,
+        {
+            "sun": sun_n,
+            "moon": moon_n,
+            "asc": asc_n,
+            "mercury": mercury_n,
+            "jupiter": jupiter_n,
+            "venus": venus_n,
+            "pof": pof,
+            "uranus": ecliptic_longitude("uranus", birth_dt),
+            "node": node_n,
+            "saturn": ecliptic_longitude("saturn", birth_dt),
+        },
+        add,
+    )
+
     points = dampen_score(max(0.0, min(100.0, points)))
     return points, reasons
 
@@ -959,7 +1171,8 @@ def find_high_score_draws(
     draw_dates = all_draw_dates_until_year_end(from_date, cfg["weekdays"])
     results = []
     for d in draw_dates:
-        local_naive = datetime.combine(d, time(cfg["draw_hour"], cfg.get("draw_minute", 0)))
+        dh, dm = lottery_draw_hm(cfg, d)
+        local_naive = datetime.combine(d, time(dh, dm))
         dr_dt = make_aware(local_naive, tz_name)
         g, _ = score_general(dr_dt, lat, lon)
         p, _ = score_personal(birth_dt, dr_dt, lat, lon)
@@ -1018,6 +1231,9 @@ LOTTERY_CONFIG = {
         "weekday_names": {1: "Dienstag", 4: "Freitag"},
         "draw_hour": 20,
         "draw_minute": 0,
+        "draw_by_weekday": {1: (20, 0), 4: (20, 0)},
+        # Online-Richtwerte (LOTTO24 u. a.); Annahmestellen/Bundesländer weichen ab
+        "close_by_weekday": {1: (18, 35), 4: (18, 35)},
         "tips_base": 25.0,
         "max_jackpot": 120.0,
     },
@@ -1027,10 +1243,101 @@ LOTTERY_CONFIG = {
         "weekday_names": {2: "Mittwoch", 5: "Samstag"},
         "draw_hour": 18,
         "draw_minute": 25,
+        "draw_by_weekday": {2: (18, 25), 5: (19, 25)},
+        "close_by_weekday": {2: (17, 45), 5: (18, 45)},
         "tips_base": 22.0,
         "max_jackpot": 50.0,
     },
 }
+
+
+def lottery_close_hm(cfg: dict, d: date) -> tuple[int, int]:
+    by = cfg.get("close_by_weekday") or {}
+    if d.weekday() in by:
+        return by[d.weekday()]
+    return int(cfg.get("close_hour", 18)), int(cfg.get("close_minute", 0))
+
+
+def lottery_draw_hm(cfg: dict, d: date) -> tuple[int, int]:
+    by = cfg.get("draw_by_weekday") or {}
+    if d.weekday() in by:
+        return by[d.weekday()]
+    return int(cfg["draw_hour"]), int(cfg.get("draw_minute", 0))
+
+
+def next_submission_deadline(
+    now: datetime, lottery_mode: str, tz_name: str
+) -> tuple[datetime, date] | None:
+    """Nächste Abgabefrist für eine Tippabgabe ab jetzt."""
+    cfg = LOTTERY_CONFIG[lottery_mode]
+    d = now.date()
+    for _ in range(16):
+        if d.weekday() in cfg["weekdays"]:
+            h, m = lottery_close_hm(cfg, d)
+            deadline = make_aware(datetime.combine(d, time(h, m)), tz_name)
+            if deadline > now:
+                return deadline, d
+        d += timedelta(days=1)
+    return None
+
+
+def render_deadline_timer(lottery_mode: str, tz_name: str, height: int = 118) -> None:
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+    now = datetime.now(tz)
+    nxt = next_submission_deadline(now, lottery_mode, tz_name)
+    cfg = LOTTERY_CONFIG[lottery_mode]
+    if not nxt:
+        st.caption("Keine Abgabefrist ermittelt.")
+        return
+    deadline, draw_date = nxt
+    wd = cfg["weekday_names"].get(draw_date.weekday(), draw_date.strftime("%A"))
+    label = cfg["label"]
+    ts_ms = int(deadline.timestamp() * 1000)
+    html = f"""
+    <div style="font-family:Inter,system-ui,sans-serif;color:#f8fafc;
+                background:#0b1220;border:1px solid #1e293b;border-radius:12px;
+                padding:0.85rem 1rem;">
+      <div style="font-size:0.72rem;color:#94a3b8;font-weight:500;">
+        Abgabefrist · {label}
+      </div>
+      <div style="font-size:0.95rem;font-weight:700;margin-top:0.15rem;">
+        {wd} {draw_date.strftime('%d.%m.%Y')} · {deadline.strftime('%H:%M')} Uhr
+      </div>
+      <div id="als-cd" style="font-size:1.35rem;font-weight:800;color:#00e5ff;
+           letter-spacing:-0.03em;margin-top:0.2rem;font-variant-numeric:tabular-nums;">
+        …
+      </div>
+      <div style="font-size:0.68rem;color:#64748b;margin-top:0.25rem;">
+        Richtwert Online. Bundesland / Annahmestelle kann abweichen.
+      </div>
+    </div>
+    <script>
+      const target = {ts_ms};
+      const el = document.getElementById("als-cd");
+      function pad(n) {{ return String(n).padStart(2, "0"); }}
+      function tick() {{
+        const ms = target - Date.now();
+        if (ms <= 0) {{
+          el.textContent = "Abgabe vorbei";
+          el.style.color = "#f87171";
+          return;
+        }}
+        const s = Math.floor(ms / 1000);
+        const d = Math.floor(s / 86400);
+        const h = Math.floor((s % 86400) / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        el.textContent = (d > 0 ? d + "d " : "") + pad(h) + ":" + pad(m) + ":" + pad(sec);
+        el.style.color = s < 3600 ? "#f87171" : (s < 6 * 3600 ? "#fbbf24" : "#00e5ff");
+      }}
+      tick();
+      setInterval(tick, 1000);
+    </script>
+    """
+    components.html(html, height=height)
 
 
 def build_draw_info(game_key: str, from_date: date, jackpots: dict) -> list[dict]:
@@ -1043,14 +1350,18 @@ def build_draw_info(game_key: str, from_date: date, jackpots: dict) -> list[dict
         seed = int(d.strftime("%Y%m%d")) + hash(game_key) % 1000
         tips = round(cfg["tips_base"] + (seed % 17) * 0.4 + i * 1.2, 1)
         jp_i = min(cfg["max_jackpot"], round(jp + i * (1.5 if game_key == "eurojackpot" else 0), 1))
+        dh, dm = lottery_draw_hm(cfg, d)
+        ch, cm = lottery_close_hm(cfg, d)
         draws.append({
             "date": d,
             "weekday_name": cfg["weekday_names"].get(d.weekday(), d.strftime("%A")),
             "jackpot_mio": jp_i,
             "tips_mio": tips,
             "source": source,
-            "draw_hour": cfg["draw_hour"],
-            "draw_minute": cfg.get("draw_minute", 0),
+            "draw_hour": dh,
+            "draw_minute": dm,
+            "close_hour": ch,
+            "close_minute": cm,
         })
     return draws
 
@@ -1766,7 +2077,9 @@ def _pill(text: str, kind: str = "") -> str:
     return f'<span class="cf-pill{k}">{text}</span>'
 
 
-def _weather_card(weekday: str, date_str: str, score: float, jackpot: float, tips: float) -> str:
+def _weather_card(
+    weekday: str, date_str: str, score: float, jackpot: float, tips: float, close_str: str = ""
+) -> str:
     color = score_color(score)
     if score >= 70:
         tag = "Sehr gut"
@@ -1774,12 +2087,14 @@ def _weather_card(weekday: str, date_str: str, score: float, jackpot: float, tip
         tag = "Gut"
     else:
         tag = "Mäßig"
+    close_html = f'<div class="jp">Abgabe bis {close_str}</div>' if close_str else ""
     return f"""
     <div class="cf-weather">
         <div class="wd">{weekday}<br>{date_str}</div>
         <div class="sc" style="color:{color} !important;">{score:.1f} %</div>
         <div class="tag">{tag} {luck_symbol(score)}</div>
         <div class="jp">Jackpot ≈ {jackpot} Mio. € · Tipps ≈ {tips} Mio.</div>
+        {close_html}
     </div>
     """
 
@@ -1902,6 +2217,8 @@ with st.sidebar:
             st.rerun()
     lottery_mode = st.session_state.lottery_mode
 
+    render_deadline_timer(lottery_mode, tz_name)
+
     save_profile = st.checkbox("Profil speichern", value=True)
 
     calculate = st.button("✨ Score berechnen", type="primary", use_container_width=True)
@@ -1915,7 +2232,7 @@ with st.sidebar:
             Porphyry-Häuser · Aspektmuster · Progressionen ·
             Solar Return · Nordknoten/Chiron · VoC ·
             Merkur-Details · anwendende Aspekte ·
-            Tagesherrscher · Planetenstunden
+            Tagesherrscher · Planetenstunden · Eklipsen
             """
         )
     with st.expander("Hinweis", expanded=False):
@@ -1966,6 +2283,16 @@ if calculate:
         voc = is_void_of_course(query_dt)
         day_ruler_name, _ = get_day_ruler(query_dt)
         hour_ruler_name, _ = get_planetary_hour(query_dt, lat, lon)
+        eclipse = nearest_eclipse(query_dt)
+        eclipse_ui = None
+        if eclipse and eclipse.get("decay", 0) > 0:
+            eclipse_ui = {
+                "kind": eclipse["kind"],
+                "label": eclipse["label"],
+                "strength_label": eclipse["strength_label"],
+                "hours": eclipse["hours"],
+                "node_orb": round(eclipse["node_orb"], 1),
+            }
 
         jackpots = fetch_jackpots()
         draws = build_draw_info(lottery_mode, query_date, jackpots)
@@ -2006,6 +2333,7 @@ if calculate:
             "merc_stat": merc_stat,
             "merc_comb": merc_comb,
             "voc": voc,
+            "eclipse_ui": eclipse_ui,
             "day_ruler_name": day_ruler_name,
             "hour_ruler_name": hour_ruler_name,
             "draws": draws,
@@ -2038,6 +2366,7 @@ if st.session_state.get("results"):
     merc_stat = R["merc_stat"]
     merc_comb = R["merc_comb"]
     voc = R["voc"]
+    eclipse_ui = R.get("eclipse_ui")
     day_ruler_name = R["day_ruler_name"]
     hour_ruler_name = R["hour_ruler_name"]
     draws = R["draws"]
@@ -2089,7 +2418,21 @@ if st.session_state.get("results"):
     ]
     if comb_txt:
         pills.append(_pill(comb_txt, comb_kind))
+    if eclipse_ui:
+        ecl_kind = "warn"
+        icon = "☀" if eclipse_ui["kind"] == "solar" else "🌑"
+        when = "heute" if abs(eclipse_ui["hours"]) < 12 else (
+            f"in {abs(eclipse_ui['hours'])} h" if eclipse_ui["hours"] > 0 else f"vor {abs(eclipse_ui['hours'])} h"
+        )
+        pills.append(
+            _pill(
+                f"{icon} {eclipse_ui['label']} ({eclipse_ui['strength_label']}, {when})",
+                ecl_kind,
+            )
+        )
     st.markdown(f'<div class="cf-pills">{"".join(pills)}</div>', unsafe_allow_html=True)
+
+    render_deadline_timer(lottery_mode, tz_name, height=122)
 
     # --- AstroWeather ---
     st.markdown(
@@ -2121,6 +2464,7 @@ if st.session_state.get("results"):
                     sc,
                     dr["jackpot_mio"],
                     dr["tips_mio"],
+                    close_str=f"{dr.get('close_hour', 18):02d}:{dr.get('close_minute', 0):02d} Uhr",
                 ),
                 unsafe_allow_html=True,
             )
@@ -2269,6 +2613,7 @@ Mondphase: {phase_label}
 Merkur: {"stationär" if merc_stat else ("rückläufig" if merc_rx else "direktläufig")}
 Merkur verbrannt: {"ja" if merc_comb else "nein"}
 Void of Course: {"ja" if voc else "nein"}
+Eklipse: {f"{eclipse_ui['label']} ({eclipse_ui['strength_label']}, {eclipse_ui['node_orb']}° Knoten)" if eclipse_ui else "keine im 3-Tage-Fenster"}
 Tagesherrscher: {day_ruler_name}
 Planetenstunde: {hour_ruler_name}
 
