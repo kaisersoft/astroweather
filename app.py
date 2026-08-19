@@ -1,6 +1,6 @@
 """
-AstroLotto Score v5 – Experimentelles Scoring-System
-=====================================================
+AstroLotto Score v5 – Clean Fortune UI
+======================================
 - skyfield (JPL DE421) für Planetenpositionen
 - 80+ Städte mit echten Zeitzonen (zoneinfo)
 - Porphyry-Häuser + verbesserter Aszendent/MC
@@ -12,8 +12,9 @@ AstroLotto Score v5 – Experimentelles Scoring-System
 - Part of Fortune, Lot of Spirit, Nordknoten, Chiron-Näherung
 - Sekundärprogressiver Mond + progressiver ASC
 - Solar Return (vereinfacht)
-- AstroWeather, 14-Tage-Verlauf, Hochscore-Tabelle >75 %
-- Leichte Score-Dämpfung sehr hoher Werte
+- AstroWeather, 14-Tage-Verlauf, Hochscore >75 %
+- Google-Kalender-Export (.ics, Erinnerung 09:00)
+- UI: Clean Fortune Dashboard (Sidebar + Metric-Cards)
 
 NUR ZUR UNTERHALTUNG – keine Gewinngarantie.
 """
@@ -70,7 +71,7 @@ BODY_NAMES_DE = {
 st.set_page_config(
     page_title="AstroLotto Score",
     page_icon="🍀",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="expanded",
 )
 
@@ -1060,86 +1061,365 @@ def format_reasons(reasons) -> str:
     return "\n".join(lines) if lines else "• Keine starken Faktoren"
 
 
+def build_google_calendar_ics(
+    selected_rows: list[dict],
+    lottery_label: str,
+    draw_hour: int,
+    draw_minute: int,
+    tz_name: str,
+    city: str,
+) -> str:
+    """
+    Erzeugt eine .ics-Datei (iCalendar) mit Terminen für die ausgewählten
+    Hochscore-Tage. Erinnerung um 09:00 Ortszeit (VALARM am Event-Start).
+    Google Kalender: Datei importieren oder doppelklicken.
+    """
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//AstroLotto Score//DE",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        f"X-WR-CALNAME:AstroLotto Hochscore-Tage",
+        f"X-WR-TIMEZONE:{tz_name}",
+    ]
+    for r in selected_rows:
+        d = r["date"]  # date object
+        # Event 09:00–09:30 Ortszeit (Erinnerung zum Tipp-Zeitpunkt)
+        dt_start = f"{d.strftime('%Y%m%d')}T090000"
+        dt_end = f"{d.strftime('%Y%m%d')}T093000"
+        uid = f"astrolotto-{d.isoformat()}-{r['score']}@astrolotto.local"
+        summary = f"🍀 AstroLotto {lottery_label} – Score {r['score']:.0f} %"
+        desc = (
+            f"AstroLotto Hochscore-Tag\\n"
+            f"Spiel: {lottery_label}\\n"
+            f"Kombinierter Score: {r['score']:.1f} % "
+            f"(Allg. {r['general']:.1f} / Pers. {r['personal']:.1f})\\n"
+            f"Ziehung ca. {draw_hour:02d}:{draw_minute:02d} Uhr\\n"
+            f"Ort/TZ: {city} ({tz_name})\\n"
+            f"Nur zur Unterhaltung – keine Gewinngarantie."
+        )
+        lines.extend([
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+            f"DTSTART;TZID={tz_name}:{dt_start}",
+            f"DTEND;TZID={tz_name}:{dt_end}",
+            f"SUMMARY:{summary}",
+            f"DESCRIPTION:{desc}",
+            "STATUS:CONFIRMED",
+            "TRANSP:OPAQUE",
+            # Erinnerung zum Event-Start (09:00)
+            "BEGIN:VALARM",
+            "ACTION:DISPLAY",
+            "DESCRIPTION:AstroLotto – heute ist ein Hochscore-Ziehungstag!",
+            "TRIGGER:-PT0S",
+            "END:VALARM",
+            # Zusätzliche Erinnerung 1 Stunde vorher (optional)
+            "BEGIN:VALARM",
+            "ACTION:DISPLAY",
+            "DESCRIPTION:AstroLotto – in 1 Stunde Erinnerung (Hochscore-Tag)",
+            "TRIGGER:-PT1H",
+            "END:VALARM",
+            "END:VEVENT",
+        ])
+    lines.append("END:VCALENDAR")
+    return "\r\n".join(lines) + "\r\n"
+
+
 # ---------------------------------------------------------------------------
-# UI
+# UI – Clean Fortune Dashboard
 # ---------------------------------------------------------------------------
 
 if "profiles" not in st.session_state:
     st.session_state.profiles = []
 
-st.title("🍀 AstroLotto Score")
-st.caption(
-    "v5 · Porphyry-Häuser · Aspektmuster · Progressionen · Solar Return · "
-    "Nordknoten/Chiron · Void of Course · anwendende Aspekte · Planetenstunden"
+# Custom CSS – Clean Fortune
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+    .stApp {
+        background-color: #f8fafc;
+    }
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #e2e8f0;
+    }
+    section[data-testid="stSidebar"] .stMarkdown h1 {
+        font-size: 1.35rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+    }
+    /* Metric cards */
+    .cf-metric {
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 1.25rem 1.35rem;
+        box-shadow: 0 1px 3px rgba(15,23,42,0.06), 0 1px 2px rgba(15,23,42,0.04);
+        border-top: 3px solid #22c55e;
+        text-align: left;
+        min-height: 110px;
+    }
+    .cf-metric.amber { border-top-color: #f59e0b; }
+    .cf-metric.green { border-top-color: #22c55e; }
+    .cf-metric.red { border-top-color: #ef4444; }
+    .cf-metric .label {
+        font-size: 0.8rem;
+        color: #64748b;
+        font-weight: 500;
+        margin-bottom: 0.25rem;
+    }
+    .cf-metric .value {
+        font-size: 2rem;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1.15;
+    }
+    .cf-metric .sub {
+        font-size: 0.75rem;
+        color: #94a3b8;
+        margin-top: 0.35rem;
+    }
+    /* Status pills */
+    .cf-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 0.75rem 0 1.25rem 0;
+    }
+    .cf-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 999px;
+        padding: 0.35rem 0.85rem;
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: #334155;
+        box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    }
+    .cf-pill.ok { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+    .cf-pill.warn { border-color: #fde68a; background: #fffbeb; color: #92400e; }
+    .cf-pill.bad { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
+    /* Weather cards */
+    .cf-weather {
+        background: #ffffff;
+        border-radius: 14px;
+        padding: 1.1rem 1rem;
+        box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+        border: 1px solid #e2e8f0;
+        text-align: center;
+        min-height: 140px;
+    }
+    .cf-weather .wd {
+        font-size: 0.75rem;
+        color: #64748b;
+        font-weight: 500;
+    }
+    .cf-weather .sc {
+        font-size: 1.5rem;
+        font-weight: 800;
+        margin: 0.35rem 0;
+        letter-spacing: -0.02em;
+    }
+    .cf-weather .jp {
+        font-size: 0.75rem;
+        color: #64748b;
+        margin-top: 0.4rem;
+    }
+    /* Section headers */
+    .cf-section {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #0f172a;
+        margin: 1.5rem 0 0.35rem 0;
+        letter-spacing: -0.01em;
+    }
+    .cf-section-sub {
+        font-size: 0.85rem;
+        color: #64748b;
+        margin-bottom: 0.85rem;
+    }
+    /* Hero title */
+    .cf-hero-title {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: #0f172a;
+        letter-spacing: -0.03em;
+        margin-bottom: 0.15rem;
+    }
+    .cf-hero-sub {
+        font-size: 0.9rem;
+        color: #64748b;
+        margin-bottom: 1.25rem;
+    }
+    /* Hide default streamlit branding spacing */
+    div[data-testid="stVerticalBlock"] > div:first-child {
+        padding-top: 0.25rem;
+    }
+    /* Primary button in sidebar */
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background-color: #16a34a;
+        border-color: #16a34a;
+        font-weight: 600;
+    }
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+        background-color: #15803d;
+        border-color: #15803d;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
-with st.expander("⚠️ Wichtiger Hinweis", expanded=False):
+
+def _metric_border(score: float) -> str:
+    if score >= 70:
+        return "green"
+    if score >= 50:
+        return "amber"
+    return "red"
+
+
+def _metric_html(label: str, value: float, sub: str) -> str:
+    cls = _metric_border(value)
+    color = score_color(value)
+    return f"""
+    <div class="cf-metric {cls}">
+        <div class="label">{label}</div>
+        <div class="value" style="color:{color};">{value:.1f} %</div>
+        <div class="sub">{sub}</div>
+    </div>
+    """
+
+
+def _pill(text: str, kind: str = "") -> str:
+    k = f" {kind}" if kind else ""
+    return f'<span class="cf-pill{k}">{text}</span>'
+
+
+def _weather_card(weekday: str, date_str: str, score: float, jackpot: float, tips: float) -> str:
+    color = score_color(score)
+    if score >= 70:
+        tag = "Sehr gut"
+    elif score >= 55:
+        tag = "Gut"
+    else:
+        tag = "Mäßig"
+    return f"""
+    <div class="cf-weather">
+        <div class="wd">{weekday}<br>{date_str}</div>
+        <div class="sc" style="color:{color};">{score:.1f} %</div>
+        <div style="font-size:0.8rem;color:#64748b;">{tag} {luck_symbol(score)}</div>
+        <div class="jp">Jackpot ≈ {jackpot} Mio. € · Tipps ≈ {tips} Mio.</div>
+    </div>
+    """
+
+
+# ---- Sidebar: Inputs ----
+with st.sidebar:
     st.markdown(
         """
-        **Nur zur Unterhaltung.** Astrologie ist keine wissenschaftlich belegte Methode,
-        Lottoziehungen vorherzusagen. Die Gewinnwahrscheinlichkeit bleibt extrem niedrig.
-        Ephemeriden: skyfield + JPL DE421. Häuser: Porphyry (Näherung an Placidus).
-        Nordknoten/Chiron: Näherungsformeln. Jackpot/Tipps = Platzhalter / live-Versuch.
-        """
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+            <span style="font-size:1.6rem;">🍀</span>
+            <div>
+                <div style="font-weight:800;font-size:1.2rem;letter-spacing:-0.02em;color:#0f172a;">AstroLotto</div>
+                <div style="font-size:0.7rem;color:#16a34a;font-weight:600;letter-spacing:0.04em;">SCORE</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+    st.caption("Astrologische Bewertung für deine Lotto-Ziehungen.")
 
-st.markdown("---")
-st.subheader("Persönliche Daten")
-
-if st.session_state.profiles:
-    labels = [
-        f"{p['birth_date']} {p['birth_time']} · {p['city']}" for p in st.session_state.profiles
-    ]
-    choice = st.selectbox("Gespeichertes Profil laden (optional)", ["— Neu eingeben —"] + labels)
-    if choice != "— Neu eingeben —":
-        idx = labels.index(choice)
-        p = st.session_state.profiles[idx]
-        default_bdate = date.fromisoformat(p["birth_date"])
-        default_btime = datetime.strptime(p["birth_time"], "%H:%M").time()
-        default_city = p["city"]
+    # Profile defaults
+    if st.session_state.profiles:
+        labels = [
+            f"{p['birth_date']} {p['birth_time']} · {p['city']}" for p in st.session_state.profiles
+        ]
+        choice = st.selectbox("Profil laden", ["— Neu eingeben —"] + labels, label_visibility="collapsed")
+        if choice != "— Neu eingeben —":
+            idx = labels.index(choice)
+            p = st.session_state.profiles[idx]
+            default_bdate = date.fromisoformat(p["birth_date"])
+            default_btime = datetime.strptime(p["birth_time"], "%H:%M").time()
+            default_city = p["city"]
+        else:
+            default_bdate = date(1990, 5, 15)
+            default_btime = datetime.strptime("12:00", "%H:%M").time()
+            default_city = "Berlin"
     else:
         default_bdate = date(1990, 5, 15)
         default_btime = datetime.strptime("12:00", "%H:%M").time()
         default_city = "Berlin"
-else:
-    default_bdate = date(1990, 5, 15)
-    default_btime = datetime.strptime("12:00", "%H:%M").time()
-    default_city = "Berlin"
 
-col1, col2, col3 = st.columns(3)
-with col1:
     birth_date = st.date_input("Geburtsdatum", value=default_bdate)
-with col2:
-    birth_time = st.time_input("Geburtsuhrzeit", value=default_btime)
-with col3:
+    birth_time = st.time_input("Geburtszeit", value=default_btime)
     query_date = st.date_input("Abfrage-Datum", value=date.today())
 
-city_names = sorted(CITY_DATA.keys())
-try:
-    default_idx = city_names.index(default_city)
-except ValueError:
-    default_idx = city_names.index("Berlin")
-city_choice = st.selectbox("Geburtsort", city_names, index=default_idx)
-lat, lon, tz_name = CITY_DATA[city_choice]
-st.caption(f"{lat:.4f}°, {lon:.4f}° · TZ: {tz_name} · {len(CITY_DATA)} Städte")
+    city_names = sorted(CITY_DATA.keys())
+    try:
+        default_idx = city_names.index(default_city)
+    except ValueError:
+        default_idx = city_names.index("Berlin")
+    city_choice = st.selectbox("Geburtsort (Stadt)", city_names, index=default_idx)
+    lat, lon, tz_name = CITY_DATA[city_choice]
+    st.caption(f"{lat:.2f}°, {lon:.2f}° · {tz_name}")
 
-save_profile = st.checkbox("Profil für diese Sitzung speichern", value=True)
+    st.markdown("**Lotto-Modus**")
+    lottery_mode = st.radio(
+        "Spielmodus",
+        options=["eurojackpot", "6aus49"],
+        format_func=lambda k: "Eurojackpot" if k == "eurojackpot" else "6aus49",
+        index=0,
+        horizontal=True,
+        label_visibility="collapsed",
+    )
 
-st.markdown("---")
-st.subheader("Lotterie")
-lottery_mode = st.radio(
-    "Spielmodus",
-    options=["eurojackpot", "6aus49"],
-    format_func=lambda k: "Eurojackpot (Di + Fr)" if k == "eurojackpot" else "LOTTO 6aus49 (Mi + Sa)",
-    index=0,
-    horizontal=True,
-    help="Eurojackpot ist der Standard. Umschalten ändert Ziehungs-Tage und Jackpot-Daten.",
+    save_profile = st.checkbox("Profil speichern", value=True)
+
+    calculate = st.button("✨ Score berechnen", type="primary", use_container_width=True)
+
+    st.markdown("---")
+    with st.expander("Regelwerk v5", expanded=False):
+        st.markdown(
+            """
+            **50 % Allgemein + 50 % Persönlich**
+
+            Porphyry-Häuser · Aspektmuster · Progressionen ·
+            Solar Return · Nordknoten/Chiron · VoC ·
+            Merkur-Details · anwendende Aspekte ·
+            Tagesherrscher · Planetenstunden
+            """
+        )
+    with st.expander("Hinweis", expanded=False):
+        st.markdown(
+            "Nur zur Unterhaltung. Keine Gewinngarantie. "
+            "Ephemeriden: skyfield + JPL DE421."
+        )
+    if st.session_state.profiles:
+        st.caption(f"{len(st.session_state.profiles)} Profil(e)")
+        if st.button("Profile löschen", use_container_width=True):
+            st.session_state.profiles = []
+            st.rerun()
+
+
+# ---- Main content ----
+st.markdown(
+    '<div class="cf-hero-title">Dein AstroLotto Score</div>'
+    '<div class="cf-hero-sub">Astrologische Bewertung für deine Lotto-Ziehungen.</div>',
+    unsafe_allow_html=True,
 )
-st.caption("AstroWeather zeigt die **nächsten 3 Ziehungen** des gewählten Spiels (exakte Ziehungszeit).")
 
-st.markdown("---")
-
-if st.button("Score berechnen", type="primary", use_container_width=True):
+if calculate:
     with st.spinner("Berechne Ephemeriden, Progressionen & Scores …"):
         birth_naive = datetime.combine(birth_date, birth_time)
         birth_dt = make_aware(birth_naive, tz_name)
@@ -1196,130 +1476,104 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
             birth_dt, lat, lon, lottery_mode, query_date, tz_name, threshold=75.0
         )
 
-    st.markdown("## Ergebnis")
+    # --- Metric tiles ---
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.markdown(
+            _metric_html("Kombiniert", comb_score, f"{luck_symbol(comb_score)} Astrologie + Transite"),
+            unsafe_allow_html=True,
+        )
+    with m2:
+        st.markdown(
+            _metric_html("Allgemein", gen_score, "Aktuelle Astro-Einflüsse"),
+            unsafe_allow_html=True,
+        )
+    with m3:
+        st.markdown(
+            _metric_html("Persönlich", per_score, "Individuell auf dich abgestimmt"),
+            unsafe_allow_html=True,
+        )
 
-    b1, b2, b3, b4 = st.columns(4)
-    with b1:
-        st.info(f"🌙 {phase_label}")
-    with b2:
-        if merc_stat:
-            st.error("☿ Merkur stationär")
-        elif merc_rx:
-            st.warning("☿ Merkur rückläufig")
-        else:
-            st.success("☿ Merkur direktläufig")
-    with b3:
-        if voc:
-            st.warning("Void of Course")
-        else:
-            st.success("Mond nicht VoC")
-    with b4:
-        st.info(f"📍 {city_choice}")
+    # --- Status pills ---
+    if merc_stat:
+        merc_txt, merc_kind = "☿ Merkur stationär", "bad"
+    elif merc_rx:
+        merc_txt, merc_kind = "☿ Merkur rückläufig", "warn"
+    else:
+        merc_txt, merc_kind = "☿ Merkur direktläufig", "ok"
+    voc_txt, voc_kind = ("Void of Course", "warn") if voc else ("nicht VoC", "ok")
+    comb_txt, comb_kind = ("Merkur verbrannt", "warn") if merc_comb else ("", "")
 
-    badge_cols = st.columns(3)
-    with badge_cols[0]:
-        st.caption(f"Tagesherrscher: **{day_ruler_name}**")
-    with badge_cols[1]:
-        st.caption(f"Planetenstunde: **{hour_ruler_name}**")
-    with badge_cols[2]:
-        if merc_comb:
-            st.caption("⚠️ Merkur verbrannt")
-        else:
-            st.caption("Merkur nicht verbrannt")
+    pills = [
+        _pill(f"🌙 {phase_label}"),
+        _pill(merc_txt, merc_kind),
+        _pill(voc_txt, voc_kind),
+        _pill(f"♥ Tagesherrscher {day_ruler_name}"),
+        _pill(f"◎ Planetenstunde {hour_ruler_name}"),
+    ]
+    if comb_txt:
+        pills.append(_pill(comb_txt, comb_kind))
+    st.markdown(f'<div class="cf-pills">{"".join(pills)}</div>', unsafe_allow_html=True)
 
+    # --- AstroWeather ---
     st.markdown(
-        f"""
-        <div style="text-align:center; padding:1.2rem; border-radius:12px;
-                    background:linear-gradient(135deg,#f5f5f5,#e8f5e9);
-                    border:2px solid {score_color(comb_score)}; margin:1rem 0;">
-            <div style="font-size:1.05rem; color:#555;">Kombinierter AstroScore</div>
-            <div style="font-size:3rem; font-weight:800; color:{score_color(comb_score)}; line-height:1.1;">
-                {comb_score:.1f} %
-            </div>
-            <div style="font-size:1.8rem;">{luck_symbol(comb_score)}</div>
-        </div>
-        """,
+        f'<div class="cf-section">AstroWeather – {LOTTERY_CONFIG[lottery_mode]["label"]}</div>'
+        f'<div class="cf-section-sub">Astrologische Score-Vorschau für deine nächsten Ziehungen.</div>',
         unsafe_allow_html=True,
     )
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown(
-            f"""
-            <div style="text-align:center; padding:0.9rem; border-radius:10px; background:#fafafa; border:1px solid #ddd;">
-                <div style="font-size:0.9rem; color:#666;">Allgemein</div>
-                <div style="font-size:1.8rem; font-weight:700; color:{score_color(gen_score)};">{gen_score:.1f} %</div>
-                <div>{luck_symbol(gen_score)}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with c2:
-        st.markdown(
-            f"""
-            <div style="text-align:center; padding:0.9rem; border-radius:10px; background:#fafafa; border:1px solid #ddd;">
-                <div style="font-size:0.9rem; color:#666;">Persönlich</div>
-                <div style="font-size:1.8rem; font-weight:700; color:{score_color(per_score)};">{per_score:.1f} %</div>
-                <div>{luck_symbol(per_score)}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("---")
-    st.subheader(f"AstroWeather – {LOTTERY_CONFIG[lottery_mode]['label']}")
-
     src = draws[0]["source"] if draws else "fallback"
     if src == "lotto.de":
         st.caption("Jackpots: live von lotto.de")
     else:
-        st.caption("Jackpots: Fallback-Werte (live-Abruf nicht verfügbar)")
+        st.caption("Jackpots: Fallback-Werte")
 
     if draw_scores:
         best_idx = draw_scores.index(max(draw_scores))
         best = draws[best_idx]
         st.markdown(
-            f"**Bester Astro-Tag unter den nächsten 3 Ziehungen:** "
-            f"{best['weekday_name']} {best['date'].strftime('%d.%m.%Y')} "
+            f"**Bester Tag:** {best['weekday_name']} {best['date'].strftime('%d.%m.%Y')} "
             f"({draw_scores[best_idx]:.1f} %)"
         )
 
-    cols = st.columns(3)
-    colors_bg = ["#fff8e1", "#e3f2fd", "#f3e5f5"]
-    for i, (col, dr, sc) in enumerate(zip(cols, draws, draw_scores)):
+    wcols = st.columns(3)
+    for i, (col, dr, sc) in enumerate(zip(wcols, draws, draw_scores)):
         with col:
             st.markdown(
-                f"""
-                <div style="text-align:center; padding:0.85rem; border-radius:10px;
-                            background:{colors_bg[i % 3]}; border:2px solid {score_color(sc)}; min-height:150px;">
-                    <div style="font-size:0.8rem; color:#666;">{dr['weekday_name']}<br>{dr['date'].strftime('%d.%m.%Y')}</div>
-                    <div style="font-size:1.35rem; font-weight:800; color:{score_color(sc)};">{sc:.1f} %</div>
-                    <div>{luck_symbol(sc)}</div>
-                    <div style="font-size:0.75rem; color:#555; margin-top:0.35rem;">
-                        ≈ {dr['jackpot_mio']} Mio. €<br>
-                        Tipps ≈ {dr['tips_mio']} Mio.
-                    </div>
-                </div>
-                """,
+                _weather_card(
+                    dr["weekday_name"],
+                    dr["date"].strftime("%d.%m.%Y"),
+                    sc,
+                    dr["jackpot_mio"],
+                    dr["tips_mio"],
+                ),
                 unsafe_allow_html=True,
             )
 
-    st.subheader("Score-Verlauf (14 Tage)")
+    # --- 14-day trend ---
+    st.markdown(
+        '<div class="cf-section">14-Tage Score-Trend</div>'
+        '<div class="cf-section-sub">Dein kombinierter Score im Verlauf der nächsten 14 Tage.</div>',
+        unsafe_allow_html=True,
+    )
     import pandas as pd
 
     df_trend = pd.DataFrame({"Datum": trend_dates, "Kombinierter Score %": trend_scores})
-    st.line_chart(df_trend.set_index("Datum"))
+    st.line_chart(df_trend.set_index("Datum"), height=220)
     best_i = trend_scores.index(max(trend_scores))
     st.caption(
-        f"Höchster Wert im Fenster: **{trend_scores[best_i]} %** am {trend_dates[best_i]} "
-        f"(rel. zum Abfrage-Datum)."
+        f"Höchster Wert: **{trend_scores[best_i]} %** am {trend_dates[best_i]}"
     )
 
-    st.markdown("---")
-    st.subheader(
-        f"Hochscore-Ziehungstage Rest {query_date.year} "
-        f"({LOTTERY_CONFIG[lottery_mode]['label']}, > 75 %)"
+    # --- High scores ---
+    st.markdown(
+        f'<div class="cf-section">Beste Tage (High Scores) – Rest {query_date.year}</div>'
+        f'<div class="cf-section-sub">'
+        f'{LOTTERY_CONFIG[lottery_mode]["label"]}, kombinierter Score &gt; 75 %. '
+        f'Tage auswählen und in Google Kalender exportieren.'
+        f'</div>',
+        unsafe_allow_html=True,
     )
+
     if high_score_draws:
         df_high = pd.DataFrame(
             [
@@ -1344,21 +1598,70 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
                 "Persönlich %": st.column_config.NumberColumn(format="%.1f"),
             },
         )
-        st.caption(
-            f"**{len(high_score_draws)}** Ziehungstag(e) mit kombiniertem Score > 75 % "
-            f"bis Jahresende gefunden (sortiert nach Score)."
-        )
-    else:
-        st.info(
-            "Keine Ziehungstage mit kombiniertem Score > 75 % im Rest des Jahres gefunden."
-        )
+        st.caption(f"**{len(high_score_draws)}** Tag(e) gefunden.")
 
+        label_to_row = {
+            f"{r['date'].strftime('%d.%m.%Y')} ({r['weekday_name']}) – {r['score']:.1f} %": r
+            for r in high_score_draws
+        }
+        all_labels = list(label_to_row.keys())
+
+        c_a, c_b = st.columns([3, 1])
+        with c_b:
+            select_all = st.checkbox("Alle auswählen", key="high_select_all", value=False)
+        if select_all:
+            chosen_labels = all_labels
+            st.success(f"Alle {len(all_labels)} Tage ausgewählt.")
+        else:
+            chosen_labels = st.multiselect(
+                "Tage für Google-Kalender auswählen",
+                options=all_labels,
+                default=[],
+                key="high_score_multiselect",
+            )
+
+        selected_rows = [label_to_row[lb] for lb in chosen_labels if lb in label_to_row]
+        st.caption(f"**{len(selected_rows)}** Tag(e) ausgewählt")
+
+        cfg = LOTTERY_CONFIG[lottery_mode]
+        if selected_rows:
+            ics_data = build_google_calendar_ics(
+                selected_rows=selected_rows,
+                lottery_label=cfg["label"],
+                draw_hour=cfg["draw_hour"],
+                draw_minute=cfg.get("draw_minute", 0),
+                tz_name=tz_name,
+                city=city_choice,
+            )
+            st.download_button(
+                label=f"📅 {len(selected_rows)} Tag(e) in Google Kalender (.ics)",
+                data=ics_data.encode("utf-8"),
+                file_name=f"astrolotto_hochscore_{query_date.isoformat()}.ics",
+                mime="text/calendar",
+                use_container_width=True,
+                type="primary",
+            )
+            with st.expander("So importierst du in Google Kalender"):
+                st.markdown(
+                    "1. `.ics`-Datei herunterladen  \n"
+                    "2. [Google Kalender](https://calendar.google.com) → Zahnrad → **Einstellungen**  \n"
+                    "3. **Importieren & exportieren** → Datei wählen → Importieren  \n\n"
+                    f"Events um **09:00** Ortszeit mit Erinnerung. "
+                    f"Ziehung ({cfg['label']}): ca. "
+                    f"{cfg['draw_hour']:02d}:{cfg.get('draw_minute', 0):02d} Uhr."
+                )
+        else:
+            st.caption("Mindestens einen Tag auswählen für den Kalender-Export.")
+    else:
+        st.info("Keine Ziehungstage mit Score > 75 % im Rest des Jahres gefunden.")
+
+    # Factors
     with st.expander("Allgemeine Faktoren (gewichtet)"):
         st.text(format_reasons(gen_reasons))
     with st.expander("Persönliche Faktoren (gewichtet)"):
         st.text(format_reasons(per_reasons))
 
-    st.markdown("---")
+    # Text export
     export_text = f"""AstroLotto Score v5 – Export
 Abfrage: {query_date.isoformat()}
 Geburt: {birth_date.isoformat()} {birth_time.strftime('%H:%M')} · {city_choice} ({tz_name})
@@ -1377,20 +1680,20 @@ Planetenstunde: {hour_ruler_name}
 
 Nächste 3 Ziehungen:
 """ + "\n".join(
-            f"  {dr['weekday_name']} {dr['date'].isoformat()}: Score {sc:.1f} % · Jackpot ≈ {dr['jackpot_mio']} Mio. € · Tipps ≈ {dr['tips_mio']} Mio."
-            for dr, sc in zip(draws, draw_scores)
-        ) + f"""
+        f"  {dr['weekday_name']} {dr['date'].isoformat()}: Score {sc:.1f} % · Jackpot ≈ {dr['jackpot_mio']} Mio. € · Tipps ≈ {dr['tips_mio']} Mio."
+        for dr, sc in zip(draws, draw_scores)
+    ) + f"""
 
 Hochscore-Ziehungstage Rest {query_date.year} (> 75 %):
 """ + (
-            "\n".join(
-                f"  {r['weekday_name']} {r['date'].isoformat()}: {r['score']:.1f} % "
-                f"(Allg. {r['general']:.1f} / Pers. {r['personal']:.1f})"
-                for r in high_score_draws
-            )
-            if high_score_draws
-            else "  (keine)"
-        ) + f"""
+        "\n".join(
+            f"  {r['weekday_name']} {r['date'].isoformat()}: {r['score']:.1f} % "
+            f"(Allg. {r['general']:.1f} / Pers. {r['personal']:.1f})"
+            for r in high_score_draws
+        )
+        if high_score_draws
+        else "  (keine)"
+    ) + f"""
 
 Allgemeine Faktoren:
 {format_reasons(gen_reasons)}
@@ -1408,40 +1711,12 @@ Persönliche Faktoren:
         mime="text/plain",
         use_container_width=True,
     )
-
     st.caption(
         "Ephemeriden: skyfield + JPL DE421 · Häuser: Porphyry · "
-        "Nordknoten/Chiron: Näherung · Progressionen/Solar Return aktiv · Nur Unterhaltung"
+        "Nordknoten/Chiron: Näherung · Nur Unterhaltung"
     )
 
 else:
-    st.info("Daten eingeben und **Score berechnen** klicken.")
-
-with st.sidebar:
-    st.header("Regelwerk v5")
-    st.markdown(
-        """
-        **50 % Allgemein + 50 % Persönlich**
-
-        **Neu in v5:**
-        - **Porphyry-Häuser** (Quadranten-Teilung, näher an Placidus)
-        - **Aspektmuster**: Großes Trigon, T-Quadrat, Yod
-        - **Sekundärprogressiver Mond** + progressiver ASC
-        - **Solar Return** (Jupiter/Uranus in Glückshäusern)
-        - **Nordknoten** (mittlerer Knoten) + **Chiron**-Näherung
-
-        **Bereits in v4:**
-        - Echte Zeitzonen, Void of Course, Merkur-Details
-        - Anwendende Aspekte, Tagesherrscher, Planetenstunden
-        - Ruler 5./8./11., Lot of Spirit, Score-Dämpfung
-
-        **AstroWeather** · **14-Tage-Verlauf** · **Hochscore > 75 %**
-        """
+    st.info(
+        "Links in der Sidebar Geburtsdaten eingeben und **Score berechnen** klicken."
     )
-    st.markdown("---")
-    if st.session_state.profiles:
-        st.caption(f"{len(st.session_state.profiles)} Profile in dieser Sitzung")
-        if st.button("Profile löschen"):
-            st.session_state.profiles = []
-            st.rerun()
-    st.caption("Nur zur Unterhaltung.")
