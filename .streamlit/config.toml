@@ -1,0 +1,5 @@
+base = "light"
+backgroundColor = #f8fafc
+secondaryBackgroundColor = #ffffff
+textColor = #0f172a
+primaryColor = #16a34a
