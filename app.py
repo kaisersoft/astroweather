@@ -1,14 +1,17 @@
 """
-AstroLotto Score v4 – Experimentelles Scoring-System
+AstroLotto Score v5 – Experimentelles Scoring-System
 =====================================================
 - skyfield (JPL DE421) für Planetenpositionen
 - 80+ Städte mit echten Zeitzonen (zoneinfo)
-- Verbesserter Aszendent + MC, Whole-Sign-Häuser (präziser ASC)
+- Porphyry-Häuser + verbesserter Aszendent/MC
 - Void of Course Mond, genaue Mondaspekte
 - Merkur: Stationär, Verbrennung, Aspekte, Hausstellung
-- Anwendende vs. scheidende Aspekte
+- Anwendende vs. scheidende Aspekte + Aspektmuster
+  (Großes Trigon, T-Quadrat, Yod)
 - Tagesherrscher + Planetenstunden
-- Part of Fortune stärker, Ruler von 5./8./11. Haus
+- Part of Fortune, Lot of Spirit, Nordknoten, Chiron-Näherung
+- Sekundärprogressiver Mond + progressiver ASC
+- Solar Return (vereinfacht)
 - AstroWeather, 14-Tage-Verlauf, Hochscore-Tabelle >75 %
 - Leichte Score-Dämpfung sehr hoher Werte
 
@@ -39,33 +42,29 @@ planets = {
     "pluto": eph["pluto barycenter"],
 }
 
-# Klassische Tagesherrscher (Chaldäische Reihe)
 DAY_RULERS = {
-    0: ("Mond", "moon"),      # Montag
-    1: ("Mars", "mars"),      # Dienstag
-    2: ("Merkur", "mercury"), # Mittwoch
-    3: ("Jupiter", "jupiter"),# Donnerstag
-    4: ("Venus", "venus"),    # Freitag
-    5: ("Saturn", "saturn"),  # Samstag
-    6: ("Sonne", "sun"),      # Sonntag
+    0: ("Mond", "moon"),
+    1: ("Mars", "mars"),
+    2: ("Merkur", "mercury"),
+    3: ("Jupiter", "jupiter"),
+    4: ("Venus", "venus"),
+    5: ("Saturn", "saturn"),
+    6: ("Sonne", "sun"),
 }
 
-# Planetenstunden-Reihenfolge (ab Sonnenaufgang, chaldäisch)
 HOUR_SEQUENCE = ["saturn", "jupiter", "mars", "sun", "venus", "mercury", "moon"]
 
 SIGN_RULERS = {
-    0: "mars",      # Widder
-    1: "venus",     # Stier
-    2: "mercury",   # Zwillinge
-    3: "moon",      # Krebs
-    4: "sun",       # Löwe
-    5: "mercury",   # Jungfrau
-    6: "venus",     # Waage
-    7: "mars",      # Skorpion (klassisch Mars)
-    8: "jupiter",   # Schütze
-    9: "saturn",    # Steinbock
-    10: "saturn",   # Wassermann (klassisch)
-    11: "jupiter",  # Fische
+    0: "mars", 1: "venus", 2: "mercury", 3: "moon",
+    4: "sun", 5: "mercury", 6: "venus", 7: "mars",
+    8: "jupiter", 9: "saturn", 10: "saturn", 11: "jupiter",
+}
+
+BODY_NAMES_DE = {
+    "sun": "Sonne", "moon": "Mond", "mercury": "Merkur", "venus": "Venus",
+    "mars": "Mars", "jupiter": "Jupiter", "saturn": "Saturn",
+    "uranus": "Uranus", "neptune": "Neptun", "pluto": "Pluto",
+    "north_node": "Nordknoten", "chiron": "Chiron",
 }
 
 st.set_page_config(
@@ -175,7 +174,6 @@ def ecliptic_longitude(body_name: str, dt: datetime) -> float:
 
 
 def planet_speed(body_name: str, dt: datetime, hours: float = 6.0) -> float:
-    """Tägliche Bewegung in Grad (positiv = direktläufig)."""
     lon0 = ecliptic_longitude(body_name, dt)
     lon1 = ecliptic_longitude(body_name, dt + timedelta(hours=hours))
     delta = (lon1 - lon0 + 180) % 360 - 180
@@ -195,25 +193,12 @@ def is_aspect(lon1: float, lon2: float, aspect_angle: float, orb: float = 8.0) -
     return abs(angle_diff(lon1, lon2) - aspect_angle) <= orb
 
 
-def aspect_orb_remaining(lon1: float, lon2: float, aspect_angle: float) -> float:
-    return abs(angle_diff(lon1, lon2) - aspect_angle)
-
-
-def is_applying(
-    lon1: float, speed1: float, lon2: float, speed2: float, aspect_angle: float
-) -> bool:
-    """
-    Anwendend = die relative Bewegung verringert den Abstand zum Aspektwinkel.
-    """
+def is_applying(lon1, speed1, lon2, speed2, aspect_angle) -> bool:
     current_diff = norm_deg(lon1 - lon2)
-    # kürzester Weg zum Aspekt
     targets = [aspect_angle, 360 - aspect_angle]
     best_target = min(targets, key=lambda t: abs((current_diff - t + 180) % 360 - 180))
-    # relative Geschwindigkeit von 1 gegenüber 2
     rel_speed = speed1 - speed2
-    # Wenn wir uns dem Target nähern
     signed = (current_diff - best_target + 180) % 360 - 180
-    # Wenn signed und rel_speed entgegengesetztes Vorzeichen haben → nähernd
     return (signed * rel_speed) < 0
 
 
@@ -242,15 +227,11 @@ def mercury_retrograde(dt: datetime) -> bool:
 
 
 def mercury_stationary(dt: datetime, threshold: float = 0.15) -> bool:
-    """Stationär, wenn tägliche Bewegung sehr klein."""
     return abs(planet_speed("mercury", dt)) < threshold
 
 
 def mercury_combust(dt: datetime, orb: float = 8.5) -> bool:
-    """Verbrennung / unter den Sonnenstrahlen (klassisch ~8.5°)."""
-    sun = ecliptic_longitude("sun", dt)
-    merc = ecliptic_longitude("mercury", dt)
-    return angle_diff(sun, merc) <= orb
+    return angle_diff(ecliptic_longitude("sun", dt), ecliptic_longitude("mercury", dt)) <= orb
 
 
 def part_of_fortune(asc: float, sun: float, moon: float, is_day: bool) -> float:
@@ -260,25 +241,52 @@ def part_of_fortune(asc: float, sun: float, moon: float, is_day: bool) -> float:
 
 
 def lot_of_spirit(asc: float, sun: float, moon: float, is_day: bool) -> float:
-    """Lot of Spirit (umgekehrte Formel zum Part of Fortune)."""
     if is_day:
         return norm_deg(asc + sun - moon)
     return norm_deg(asc + moon - sun)
 
 
+def mean_north_node(dt: datetime) -> float:
+    """
+    Mittlerer Mondknoten (Näherung, ausreichend für Unterhaltung).
+    Basierend auf bekannter mittlerer Länge ca. 125.04° am J2000 + Drift.
+    """
+    # J2000.0 = 2000-01-01 12:00 TT
+    j2000 = datetime(2000, 1, 1, 12, 0, tzinfo=timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    days = (dt - j2000).total_seconds() / 86400.0
+    # Mittlerer Knoten: ~ -0.0529539°/Tag
+    node = 125.04455501 - 0.05295376 * days
+    return norm_deg(node)
+
+
+def approx_chiron(dt: datetime) -> float:
+    """
+    Grobe Chiron-Länge (polynomiale Näherung, ±2–3° typisch).
+    Für Unterhaltungszwecke ausreichend.
+    """
+    j2000 = datetime(2000, 1, 1, 12, 0, tzinfo=timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    years = (dt - j2000).total_seconds() / (86400.0 * 365.25)
+    # Chiron ~ 4.5° bei J2000, Umlauf ~50.7 Jahre
+    # Sehr vereinfachte sinusoidale Näherung
+    mean = 4.5 + (360.0 / 50.7) * years
+    # leichte Exzentrizitätskorrektur
+    anomaly = math.radians(mean * 0.8)
+    lon = mean + 8.0 * math.sin(anomaly)
+    return norm_deg(lon)
+
+
 def approx_ascendant_mc(dt: datetime, lat: float, lon: float) -> tuple[float, float]:
-    """
-    Verbesserter Aszendent + Medium Coeli (RAMC-basiert).
-    Nutzt GAST + geografische Länge und schräge Aufsteigung.
-    """
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     t = ts.from_datetime(dt)
-    gast = t.gast * 15.0  # Grad
-    lst = norm_deg(gast + lon)  # Local Sidereal Time / RAMC
-    eps = 23.4392911  # mittlere Schiefe der Ekliptik
+    gast = t.gast * 15.0
+    lst = norm_deg(gast + lon)
+    eps = 23.4392911
 
-    # MC = RAMC transformiert in Ekliptik
     mc = math.degrees(
         math.atan2(
             math.sin(math.radians(lst)),
@@ -287,7 +295,6 @@ def approx_ascendant_mc(dt: datetime, lat: float, lon: float) -> tuple[float, fl
     )
     mc = norm_deg(mc)
 
-    # Aszendent (Standardformel mit Latitude)
     asc = math.degrees(
         math.atan2(
             math.cos(math.radians(lst)),
@@ -300,6 +307,62 @@ def approx_ascendant_mc(dt: datetime, lat: float, lon: float) -> tuple[float, fl
     return norm_deg(asc), mc
 
 
+def porphyry_houses(asc: float, mc: float) -> list[float]:
+    """
+    Porphyry-Häuser: Quadranten zwischen ASC–MC–DSC–IC werden
+    in drei gleiche Teile geteilt. Deutlich näher an Placidus als Whole Sign.
+    Gibt Cusps 1–12 zurück (Cusp 1 = ASC, Cusp 10 = MC).
+    """
+    dsc = norm_deg(asc + 180)
+    ic = norm_deg(mc + 180)
+
+    def trisect(start: float, end: float) -> list[float]:
+        """Drei gleiche Abschnitte von start nach end (kürzester Bogen vorwärts)."""
+        span = norm_deg(end - start)
+        step = span / 3.0
+        return [norm_deg(start + step), norm_deg(start + 2 * step)]
+
+    # Quadrant ASC → MC (Häuser 12, 11)
+    c12, c11 = trisect(asc, mc)
+    # Quadrant MC → DSC (Häuser 9, 8)
+    c9, c8 = trisect(mc, dsc)
+    # Quadrant DSC → IC (Häuser 7, 6) – Cusp 7 = DSC
+    c6, c5 = trisect(dsc, ic)
+    # Quadrant IC → ASC (Häuser 4, 3) – Cusp 4 = IC
+    c3, c2 = trisect(ic, asc)
+
+    # Index 0 ungenutzt, 1=ASC … 12
+    cusps = [0.0] * 13
+    cusps[1] = asc
+    cusps[2] = c2
+    cusps[3] = c3
+    cusps[4] = ic
+    cusps[5] = c5
+    cusps[6] = c6
+    cusps[7] = dsc
+    cusps[8] = c8
+    cusps[9] = c9
+    cusps[10] = mc
+    cusps[11] = c11
+    cusps[12] = c12
+    return cusps
+
+
+def house_of_longitude(lon: float, cusps: list[float]) -> int:
+    """Welches Haus enthält die gegebene Länge (Porphyry-Cusps)."""
+    for h in range(1, 13):
+        next_h = h + 1 if h < 12 else 1
+        start = cusps[h]
+        end = cusps[next_h]
+        if start <= end:
+            if start <= lon < end:
+                return h
+        else:  # über 0°
+            if lon >= start or lon < end:
+                return h
+    return 1
+
+
 def sign_index(lon: float) -> int:
     return int(lon // 30) % 12
 
@@ -308,43 +371,27 @@ def whole_sign_house(planet_lon: float, asc_lon: float) -> int:
     return ((sign_index(planet_lon) - sign_index(asc_lon)) % 12) + 1
 
 
-def house_ruler(house_num: int, asc_lon: float) -> str:
-    """Ruler des Zeichens, das das Haus eröffnet (Whole Sign)."""
-    sign = (sign_index(asc_lon) + house_num - 1) % 12
+def house_ruler_porphyry(house_num: int, cusps: list[float]) -> str:
+    """Ruler des Zeichens, in dem der Haus-Cusp steht."""
+    sign = sign_index(cusps[house_num])
     return SIGN_RULERS[sign]
 
 
 def is_void_of_course(dt: datetime, major_orbs: dict | None = None) -> bool:
-    """
-    Void of Course: Mond macht vor dem Verlassen des aktuellen Zeichens
-    keinen weiteren klassischen Aspekt (0, 60, 90, 120, 180) zu den
-    Planeten Sonne–Pluto.
-    """
     if major_orbs is None:
         major_orbs = {
-            "sun": 8.0,
-            "mercury": 7.0,
-            "venus": 7.0,
-            "mars": 7.0,
-            "jupiter": 8.0,
-            "saturn": 8.0,
-            "uranus": 6.0,
-            "neptune": 6.0,
-            "pluto": 5.0,
+            "sun": 8.0, "mercury": 7.0, "venus": 7.0, "mars": 7.0,
+            "jupiter": 8.0, "saturn": 8.0, "uranus": 6.0,
+            "neptune": 6.0, "pluto": 5.0,
         }
     moon = ecliptic_longitude("moon", dt)
     moon_sign = sign_index(moon)
-    moon_speed = planet_speed("moon", dt)  # ~13°/Tag
-
-    # Restliche Grad im Zeichen
+    moon_speed = planet_speed("moon", dt)
     deg_in_sign = moon % 30
     degrees_left = 30.0 - deg_in_sign
     hours_left = degrees_left / max(abs(moon_speed) / 24.0, 0.01)
-
     aspects = [0, 60, 90, 120, 180]
     bodies = list(major_orbs.keys())
-
-    # Prüfe in mehreren Schritten bis zum Zeichenwechsel
     steps = max(3, int(hours_left / 2) + 1)
     for i in range(1, steps + 1):
         future = dt + timedelta(hours=(hours_left * i / steps))
@@ -361,17 +408,10 @@ def is_void_of_course(dt: datetime, major_orbs: dict | None = None) -> bool:
 
 
 def get_day_ruler(dt: datetime) -> tuple[str, str]:
-    """(Name, body_key) des Tagesherrschers."""
-    # weekday() : 0 = Montag … 6 = Sonntag
     return DAY_RULERS[dt.weekday()]
 
 
 def get_planetary_hour(dt: datetime, lat: float, lon: float) -> tuple[str, str]:
-    """
-    Vereinfachte Planetenstunde.
-    Nutzt ungefähre Tageslänge (Sonnenauf-/untergang via Deklination-Näherung).
-    """
-    # Grobe Sonnenaufgangs-/untergangsschätzung
     day_of_year = dt.timetuple().tm_yday
     decl = 23.44 * math.sin(math.radians((360 / 365) * (day_of_year - 81)))
     lat_r = math.radians(lat)
@@ -380,52 +420,163 @@ def get_planetary_hour(dt: datetime, lat: float, lon: float) -> tuple[str, str]:
         ha = math.acos(-math.tan(lat_r) * math.tan(decl_r))
         daylight_hours = 2 * math.degrees(ha) / 15.0
     except ValueError:
-        daylight_hours = 12.0  # Polartag/-nacht Fallback
-
+        daylight_hours = 12.0
     daylight_hours = max(6.0, min(18.0, daylight_hours))
     night_hours = 24.0 - daylight_hours
     sunrise_h = 12.0 - daylight_hours / 2.0
-
     local_hour = dt.hour + dt.minute / 60.0
     if sunrise_h <= local_hour < sunrise_h + daylight_hours:
-        # Tagstunde
         hour_idx = int((local_hour - sunrise_h) / (daylight_hours / 12.0))
         hour_idx = max(0, min(11, hour_idx))
-        is_day = True
     else:
-        # Nachtstunde
         if local_hour >= sunrise_h + daylight_hours:
             night_start = sunrise_h + daylight_hours
         else:
             night_start = sunrise_h + daylight_hours - 24.0
         hour_idx = int((local_hour - night_start) / (night_hours / 12.0))
         hour_idx = max(0, min(11, hour_idx))
-        is_day = False
-
     day_ruler_key = DAY_RULERS[dt.weekday()][1]
-    # Start der Sequenz: Tagesherrscher bei Sonnenaufgang
     start_idx = HOUR_SEQUENCE.index(day_ruler_key)
     seq_idx = (start_idx + hour_idx) % 7
     body = HOUR_SEQUENCE[seq_idx]
-    names = {
-        "sun": "Sonne",
-        "moon": "Mond",
-        "mercury": "Merkur",
-        "venus": "Venus",
-        "mars": "Mars",
-        "jupiter": "Jupiter",
-        "saturn": "Saturn",
-    }
-    return names[body], body
+    return BODY_NAMES_DE.get(body, body), body
 
 
 def dampen_score(raw: float) -> float:
-    """Leichte Dämpfung sehr hoher Scores, damit nicht zu viele > 80 % erscheinen."""
     if raw <= 70:
         return raw
-    # sanfte Kurve: 70 → 70, 100 → ~88
     excess = raw - 70
     return 70 + excess * (0.75 - 0.15 * (excess / 30.0))
+
+
+# ---------------------------------------------------------------------------
+# Aspektmuster
+# ---------------------------------------------------------------------------
+
+def detect_aspect_patterns(positions: dict[str, float], speeds: dict[str, float] | None = None) -> list[tuple[str, float]]:
+    """
+    Sucht nach Großem Trigon, T-Quadrat und Yod unter den Glücksplaneten
+    und wichtigen Körpern. Gibt (Beschreibung, Punkte) zurück.
+    """
+    found = []
+    luck = ["jupiter", "venus", "uranus", "sun", "moon"]
+    all_bodies = list(positions.keys())
+
+    def has(a, b, angle, orb=7.0):
+        return is_aspect(positions[a], positions[b], angle, orb)
+
+    # Großes Trigon (3×120°) mit mind. einem Glücksplaneten
+    for i, a in enumerate(all_bodies):
+        for j, b in enumerate(all_bodies):
+            if j <= i:
+                continue
+            for k, c in enumerate(all_bodies):
+                if k <= j:
+                    continue
+                if has(a, b, 120, 7) and has(b, c, 120, 7) and has(a, c, 120, 7):
+                    names = {a, b, c}
+                    if names & set(luck):
+                        label = "–".join(BODY_NAMES_DE.get(x, x) for x in sorted(names))
+                        bonus = 14 if "jupiter" in names or "uranus" in names else 10
+                        found.append((f"Großes Trigon ({label})", bonus))
+                        break
+            else:
+                continue
+            break
+        else:
+            continue
+        break  # nur ein Großes Trigon zählen
+
+    # T-Quadrat (Opposition + 2 Quadrate)
+    for i, a in enumerate(all_bodies):
+        for j, b in enumerate(all_bodies):
+            if j <= i:
+                continue
+            if not has(a, b, 180, 8):
+                continue
+            for c in all_bodies:
+                if c in (a, b):
+                    continue
+                if has(a, c, 90, 7) and has(b, c, 90, 7):
+                    names = {a, b, c}
+                    # Aufgelöstes T-Quadrat (wenn Apex harmonisch zu einem Glücksplaneten) = Bonus
+                    # Einfaches T-Quadrat eher gemischt
+                    if "jupiter" in names or "uranus" in names or "venus" in names:
+                        label = "–".join(BODY_NAMES_DE.get(x, x) for x in sorted(names))
+                        found.append((f"T-Quadrat mit Glücksplanet ({label})", 6))
+                    else:
+                        found.append(("T-Quadrat (Spannung)", -5))
+                    break
+            else:
+                continue
+            break
+        else:
+            continue
+        break
+
+    # Yod (Finger Gottes): 2×150° + 60° Basis
+    for i, a in enumerate(all_bodies):
+        for j, b in enumerate(all_bodies):
+            if j <= i:
+                continue
+            if not has(a, b, 60, 5):
+                continue
+            for c in all_bodies:
+                if c in (a, b):
+                    continue
+                if has(a, c, 150, 6) and has(b, c, 150, 6):
+                    names = {a, b, c}
+                    if names & {"jupiter", "uranus", "venus", "north_node"}:
+                        label = "–".join(BODY_NAMES_DE.get(x, x) for x in sorted(names))
+                        found.append((f"Yod / Finger Gottes ({label})", 11))
+                    else:
+                        found.append(("Yod (Schicksalspunkt)", 5))
+                    break
+            else:
+                continue
+            break
+        else:
+            continue
+        break
+
+    return found
+
+
+# ---------------------------------------------------------------------------
+# Progressionen & Solar Return
+# ---------------------------------------------------------------------------
+
+def secondary_progressed_date(birth_dt: datetime, query_dt: datetime) -> datetime:
+    """
+    Sekundärprogression: 1 Tag nach Geburt = 1 Jahr Leben.
+    Gibt das progressive Datum zurück.
+    """
+    if birth_dt.tzinfo is None:
+        birth_dt = birth_dt.replace(tzinfo=timezone.utc)
+    if query_dt.tzinfo is None:
+        query_dt = query_dt.replace(tzinfo=timezone.utc)
+    age_years = (query_dt - birth_dt).total_seconds() / (86400.0 * 365.2425)
+    return birth_dt + timedelta(days=age_years)
+
+
+def solar_return_approx(birth_dt: datetime, year: int, lat: float, lon: float) -> datetime:
+    """
+    Näherung des Solar-Return-Zeitpunkts: Sonne wieder auf nataler Länge.
+    Sucht im Geburtsmonat ±15 Tage des Jahres.
+    """
+    natal_sun = ecliptic_longitude("sun", birth_dt)
+    # Start um Geburtstag im Zieljahr
+    candidate = datetime(year, birth_dt.month, birth_dt.day, 12, 0, tzinfo=timezone.utc)
+    best_dt = candidate
+    best_diff = 999.0
+    for hours in range(-20 * 24, 20 * 24, 6):  # ±20 Tage in 6h-Schritten
+        t = candidate + timedelta(hours=hours)
+        sun = ecliptic_longitude("sun", t)
+        d = angle_diff(sun, natal_sun)
+        if d < best_diff:
+            best_diff = d
+            best_dt = t
+    return best_dt
 
 
 # ---------------------------------------------------------------------------
@@ -444,24 +595,25 @@ def score_general(dt: datetime, lat: float = 50.0, lon: float = 10.0):
     uranus = ecliptic_longitude("uranus", dt)
     mercury = ecliptic_longitude("mercury", dt)
     mars = ecliptic_longitude("mars", dt)
+    neptune = ecliptic_longitude("neptune", dt)
+    pluto = ecliptic_longitude("pluto", dt)
+    node = mean_north_node(dt)
+    chiron = approx_chiron(dt)
 
-    speeds = {
-        "sun": planet_speed("sun", dt),
-        "moon": planet_speed("moon", dt),
-        "mercury": planet_speed("mercury", dt),
-        "venus": planet_speed("venus", dt),
-        "mars": planet_speed("mars", dt),
-        "jupiter": planet_speed("jupiter", dt),
-        "saturn": planet_speed("saturn", dt),
-        "uranus": planet_speed("uranus", dt),
+    positions = {
+        "sun": sun, "moon": moon, "mercury": mercury, "venus": venus,
+        "mars": mars, "jupiter": jupiter, "saturn": saturn,
+        "uranus": uranus, "neptune": neptune, "pluto": pluto,
+        "north_node": node, "chiron": chiron,
     }
+    speeds = {k: planet_speed(k, dt) if k in planets else 0.0 for k in positions}
 
     def add(delta, text):
         nonlocal points
         points += delta
         reasons.append((text, delta))
 
-    # --- Jupiter ---
+    # Jupiter
     for asp, orb, bonus, label in [
         (120, 8, 12, "Jupiter Trigon Sonne"),
         (60, 6, 9, "Jupiter Sextil Sonne"),
@@ -479,7 +631,7 @@ def score_general(dt: datetime, lat: float = 50.0, lon: float = 10.0):
     if is_aspect(jupiter, sun, 90, 7) or is_aspect(jupiter, sun, 180, 7):
         add(-8, "Jupiter hart zur Sonne")
 
-    # --- Uranus ---
+    # Uranus
     if is_aspect(uranus, mercury, 0, 6) or is_aspect(uranus, mercury, 120, 7):
         applying = is_applying(uranus, speeds["uranus"], mercury, speeds["mercury"], 0)
         add(15 if applying else 11, "Uranus aktiviert Merkur (Zahlen/Tickets)" + (" ★" if applying else ""))
@@ -488,7 +640,7 @@ def score_general(dt: datetime, lat: float = 50.0, lon: float = 10.0):
     if is_aspect(uranus, venus, 0, 6):
         add(9, "Uranus–Venus (unerwarteter Geldfluss)")
 
-    # --- Mondphase ---
+    # Mondphase
     phase = moon_phase_fraction(dt)
     if 0.1 < phase < 0.45:
         add(7, "Zunehmender Mond")
@@ -497,77 +649,71 @@ def score_general(dt: datetime, lat: float = 50.0, lon: float = 10.0):
     if abs(phase - 0.5) < 0.04:
         add(5, "Nahe Vollmond")
 
-    # --- Void of Course ---
     if is_void_of_course(dt):
         add(-12, "Mond Void of Course (ungünstig für neue Unternehmungen)")
 
-    # --- Genauere Mondaspekte ---
+    # Mondaspekte
     for body, lon_b, name, spd_key in [
         (jupiter, jupiter, "Jupiter", "jupiter"),
         (uranus, uranus, "Uranus", "uranus"),
         (venus, venus, "Venus", "venus"),
+        (node, node, "Nordknoten", "north_node"),
     ]:
         for asp, orb, pts in [(0, 5, 8), (120, 6, 7), (60, 5, 5)]:
             if is_aspect(moon, lon_b, asp, orb):
-                applying = is_applying(moon, speeds["moon"], lon_b, speeds[spd_key], asp)
+                applying = is_applying(moon, speeds["moon"], lon_b, speeds.get(spd_key, 0), asp)
                 add(pts + (2 if applying else 0), f"Mond {asp}° {name}" + (" (anwendend)" if applying else ""))
                 break
 
-    # --- Merkur detailliert ---
+    # Merkur
     if mercury_stationary(dt):
         add(-9, "Merkur stationär (kritisch für Tickets/Zahlen)")
     elif mercury_retrograde(dt):
         add(-7, "Merkur rückläufig")
     if mercury_combust(dt):
         add(-6, "Merkur verbrannt / unter den Sonnenstrahlen")
-
-    # Harmonische Merkur-Aspekte
     if is_aspect(mercury, jupiter, 120, 7) or is_aspect(mercury, jupiter, 60, 5):
         add(8, "Merkur harmonisch zu Jupiter")
     if is_aspect(mercury, uranus, 120, 6) or is_aspect(mercury, uranus, 0, 5):
         add(7, "Merkur–Uranus (plötzliche Eingebung)")
 
-    # --- Saturn ---
+    # Saturn
     if is_aspect(saturn, jupiter, 90, 6) or is_aspect(saturn, jupiter, 180, 6):
         add(-9, "Saturn belastet Jupiter")
     if is_aspect(saturn, venus, 90, 6):
         add(-6, "Saturn–Venus Spannung")
 
-    # --- Venus–Jupiter ---
     if is_aspect(venus, jupiter, 120, 7) or is_aspect(venus, jupiter, 60, 5):
         add(8, "Venus–Jupiter Trigon/Sextil")
 
-    # --- Häuser + Ruler (Whole Sign, aber mit besserem ASC) ---
+    # Häuser (Porphyry)
     asc, mc = approx_ascendant_mc(dt, lat, lon)
-    for lon_p, name, spd_key in [
-        (jupiter, "Jupiter", "jupiter"),
-        (uranus, "Uranus", "uranus"),
-        (venus, "Venus", "venus"),
-        (mercury, "Merkur", "mercury"),
+    cusps = porphyry_houses(asc, mc)
+
+    for lon_p, name in [
+        (jupiter, "Jupiter"), (uranus, "Uranus"), (venus, "Venus"),
+        (mercury, "Merkur"), (node, "Nordknoten"), (chiron, "Chiron"),
     ]:
-        h = whole_sign_house(lon_p, asc)
+        h = house_of_longitude(lon_p, cusps)
         if h in (5, 8, 11):
             add(5, f"{name} im {h}. Haus (Spekulation/fremd. Geld/Gewinne)")
         if h == 3 and name == "Merkur":
             add(4, "Merkur im 3. Haus (Kommunikation/Tippschein)")
 
-    # Ruler der Glückshäuser aktiv
     for h in (5, 8, 11):
-        ruler = house_ruler(h, asc)
-        ruler_lon = ecliptic_longitude(ruler, dt)
-        # Ruler in gutem Aspekt zu Jupiter oder Uranus
+        ruler = house_ruler_porphyry(h, cusps)
+        ruler_lon = positions.get(ruler) or ecliptic_longitude(ruler, dt)
         if is_aspect(ruler_lon, jupiter, 120, 7) or is_aspect(ruler_lon, jupiter, 0, 5):
             add(4, f"Ruler des {h}. Hauses harmonisch zu Jupiter")
         if is_aspect(ruler_lon, uranus, 0, 5) or is_aspect(ruler_lon, uranus, 120, 6):
             add(3, f"Ruler des {h}. Hauses aktiviert von Uranus")
 
-    # MC-Aktivierung
     if is_aspect(jupiter, mc, 0, 6) or is_aspect(jupiter, mc, 120, 7):
         add(6, "Jupiter am MC / Trigon MC")
     if is_aspect(uranus, mc, 0, 5):
         add(5, "Uranus am MC (plötzliche Sichtbarkeit)")
 
-    # --- Tagesherrscher & Planetenstunde ---
+    # Tagesherrscher & Planetenstunde
     day_name, day_key = get_day_ruler(dt)
     hour_name, hour_key = get_planetary_hour(dt, lat, lon)
     if day_key in ("jupiter", "venus"):
@@ -579,15 +725,30 @@ def score_general(dt: datetime, lat: float = 50.0, lon: float = 10.0):
     elif hour_key in ("saturn", "mars"):
         add(-3, f"Planetenstunde {hour_name}")
 
-    # --- Part of Fortune (allgemein, nächtlich/tag) ---
+    # Part of Fortune + Spirit
     is_day = 6 <= dt.hour < 18
     pof = part_of_fortune(asc, sun, moon, is_day)
+    spirit = lot_of_spirit(asc, sun, moon, is_day)
     if is_aspect(jupiter, pof, 0, 5) or is_aspect(jupiter, pof, 120, 6):
         add(7, "Jupiter aktiviert Part of Fortune")
     if is_aspect(uranus, pof, 0, 4) or is_aspect(uranus, pof, 120, 5):
         add(6, "Uranus aktiviert Part of Fortune")
     if is_aspect(moon, pof, 0, 4):
         add(4, "Mond über Part of Fortune")
+    if is_aspect(jupiter, spirit, 0, 5) or is_aspect(jupiter, spirit, 120, 6):
+        add(5, "Jupiter aktiviert Lot of Spirit")
+
+    # Nordknoten & Chiron
+    if is_aspect(jupiter, node, 0, 5) or is_aspect(jupiter, node, 120, 6):
+        add(6, "Jupiter–Nordknoten (Schicksal/Glück)")
+    if is_aspect(uranus, node, 0, 4) or is_aspect(uranus, node, 120, 5):
+        add(5, "Uranus–Nordknoten (unerwarteter Schicksalsimpuls)")
+    if is_aspect(jupiter, chiron, 0, 5) or is_aspect(uranus, chiron, 0, 4):
+        add(4, "Glücksplanet–Chiron (unerwartete Wendung)")
+
+    # Aspektmuster
+    for desc, pts in detect_aspect_patterns(positions, speeds):
+        add(pts, desc)
 
     points = dampen_score(max(0.0, min(100.0, points)))
     return points, reasons
@@ -602,8 +763,10 @@ def score_personal(birth_dt, query_dt, lat, lon):
     mercury_n = ecliptic_longitude("mercury", birth_dt)
     venus_n = ecliptic_longitude("venus", birth_dt)
     jupiter_n = ecliptic_longitude("jupiter", birth_dt)
+    node_n = mean_north_node(birth_dt)
 
     asc_n, mc_n = approx_ascendant_mc(birth_dt, lat, lon)
+    cusps_n = porphyry_houses(asc_n, mc_n)
     is_day = 6 <= birth_dt.hour < 18
     pof = part_of_fortune(asc_n, sun_n, moon_n, is_day)
     spirit = lot_of_spirit(asc_n, sun_n, moon_n, is_day)
@@ -614,6 +777,8 @@ def score_personal(birth_dt, query_dt, lat, lon):
     saturn_t = ecliptic_longitude("saturn", query_dt)
     moon_t = ecliptic_longitude("moon", query_dt)
     mercury_t = ecliptic_longitude("mercury", query_dt)
+    node_t = mean_north_node(query_dt)
+    chiron_t = approx_chiron(query_dt)
 
     speeds_t = {
         "jupiter": planet_speed("jupiter", query_dt),
@@ -644,6 +809,8 @@ def score_personal(birth_dt, query_dt, lat, lon):
         add(11, "Jupiter-Transit zur radix Venus")
     if is_aspect(jupiter_t, jupiter_n, 0, 5):
         add(15, "Jupiter-Return / Rückkehr-Nähe")
+    if is_aspect(jupiter_t, node_n, 0, 5) or is_aspect(jupiter_t, node_n, 120, 6):
+        add(8, "Jupiter-Transit zum radix Nordknoten")
 
     # Part of Fortune + Spirit
     if is_aspect(jupiter_t, pof, 0, 6) or is_aspect(jupiter_t, pof, 120, 7):
@@ -655,7 +822,7 @@ def score_personal(birth_dt, query_dt, lat, lon):
     if is_aspect(jupiter_t, spirit, 0, 5) or is_aspect(jupiter_t, spirit, 120, 6):
         add(6, "Jupiter aktiviert Lot of Spirit")
 
-    # Uranus-Transite
+    # Uranus
     if is_aspect(uranus_t, mercury_n, 0, 5) or is_aspect(uranus_t, mercury_n, 120, 6):
         applying = is_applying(uranus_t, speeds_t["uranus"], mercury_n, 0.0, 0)
         add(14 if applying else 11, "Uranus auf radix Merkur (Tickets/Zahlen)" + (" ★" if applying else ""))
@@ -670,26 +837,56 @@ def score_personal(birth_dt, query_dt, lat, lon):
     if is_aspect(saturn_t, pof, 90, 5) or is_aspect(saturn_t, pof, 180, 5):
         add(-8, "Saturn belastet Part of Fortune")
 
-    # Venus / Mond
     if is_aspect(venus_t, jupiter_n, 120, 6) or is_aspect(venus_t, jupiter_n, 0, 5):
         add(8, "Venus-Transit zu radix Jupiter")
     if is_aspect(moon_t, jupiter_n, 0, 5) or is_aspect(moon_t, jupiter_n, 120, 6):
         add(6, "Mond–Jupiter persönlich")
 
     # Häuser
-    for tlon, name in [(jupiter_t, "Jupiter"), (uranus_t, "Uranus"), (mercury_t, "Merkur")]:
-        h = whole_sign_house(tlon, asc_n)
+    for tlon, name in [(jupiter_t, "Jupiter"), (uranus_t, "Uranus"), (mercury_t, "Merkur"), (node_t, "Nordknoten")]:
+        h = house_of_longitude(tlon, cusps_n)
         if h in (5, 8, 11):
             add(5, f"Transit-{name} im radix {h}. Haus")
         if name == "Merkur" and h == 3:
             add(3, "Transit-Merkur im radix 3. Haus")
 
-    # Ruler der Glückshäuser im Transit
     for h in (5, 8, 11):
-        ruler = house_ruler(h, asc_n)
-        ruler_t = ecliptic_longitude(ruler, query_dt)
+        ruler = house_ruler_porphyry(h, cusps_n)
+        ruler_t = ecliptic_longitude(ruler, query_dt) if ruler in planets else 0.0
         if is_aspect(ruler_t, jupiter_t, 0, 5) or is_aspect(ruler_t, jupiter_t, 120, 6):
             add(4, f"Ruler des radix {h}. Hauses harmonisch zu Transit-Jupiter")
+
+    # --- Sekundärprogression ---
+    prog_dt = secondary_progressed_date(birth_dt, query_dt)
+    prog_moon = ecliptic_longitude("moon", prog_dt)
+    prog_asc, _ = approx_ascendant_mc(prog_dt, lat, lon)
+
+    if is_aspect(prog_moon, jupiter_t, 0, 5) or is_aspect(prog_moon, jupiter_t, 120, 6):
+        add(9, "Progressiver Mond harmonisch zu Transit-Jupiter")
+    if is_aspect(prog_moon, uranus_t, 0, 4) or is_aspect(prog_moon, uranus_t, 120, 5):
+        add(8, "Progressiver Mond–Uranus (plötzlicher emotionaler Impuls)")
+    if is_aspect(prog_moon, pof, 0, 4):
+        add(6, "Progressiver Mond über Part of Fortune")
+    if is_aspect(prog_asc, jupiter_t, 0, 5) or is_aspect(prog_asc, jupiter_t, 120, 6):
+        add(7, "Progressiver Aszendent–Jupiter")
+
+    # --- Solar Return (vereinfacht) ---
+    try:
+        sr_dt = solar_return_approx(birth_dt, query_dt.year, lat, lon)
+        sr_jup = ecliptic_longitude("jupiter", sr_dt)
+        sr_ura = ecliptic_longitude("uranus", sr_dt)
+        sr_asc, sr_mc = approx_ascendant_mc(sr_dt, lat, lon)
+        sr_cusps = porphyry_houses(sr_asc, sr_mc)
+        h_j = house_of_longitude(sr_jup, sr_cusps)
+        h_u = house_of_longitude(sr_ura, sr_cusps)
+        if h_j in (5, 8, 11):
+            add(8, f"Solar-Return-Jupiter im {h_j}. Haus")
+        if h_u in (5, 8, 11):
+            add(7, f"Solar-Return-Uranus im {h_u}. Haus")
+        if is_aspect(sr_jup, sun_n, 0, 5) or is_aspect(sr_jup, sun_n, 120, 6):
+            add(6, "Solar-Jupiter harmonisch zur radix Sonne")
+    except Exception:
+        pass
 
     points = dampen_score(max(0.0, min(100.0, points)))
     return points, reasons
@@ -713,11 +910,6 @@ def score_color(score: float) -> str:
     if score >= 50:
         return "#f9a825"
     return "#c62828"
-
-
-def next_weekday(d: date, weekday: int) -> date:
-    days_ahead = (weekday - d.weekday()) % 7
-    return d + timedelta(days=days_ahead)
 
 
 def next_n_draw_dates(from_date: date, weekdays: list[int], n: int = 3) -> list[date]:
@@ -744,7 +936,6 @@ def all_draw_dates_until_year_end(from_date: date, weekdays: list[int]) -> list[
 
 
 def make_aware(dt_naive: datetime, tz_name: str) -> datetime:
-    """Erzeugt timezone-aware datetime mit zoneinfo."""
     try:
         tz = ZoneInfo(tz_name)
     except Exception:
@@ -765,7 +956,6 @@ def find_high_score_draws(
     draw_dates = all_draw_dates_until_year_end(from_date, cfg["weekdays"])
     results = []
     for d in draw_dates:
-        # Exakte Ziehungszeit (lokal)
         local_naive = datetime.combine(d, time(cfg["draw_hour"], cfg.get("draw_minute", 0)))
         dr_dt = make_aware(local_naive, tz_name)
         g, _ = score_general(dr_dt, lat, lon)
@@ -821,7 +1011,7 @@ def fetch_jackpots() -> dict:
 LOTTERY_CONFIG = {
     "eurojackpot": {
         "label": "Eurojackpot",
-        "weekdays": [1, 4],  # Di, Fr
+        "weekdays": [1, 4],
         "weekday_names": {1: "Dienstag", 4: "Freitag"},
         "draw_hour": 20,
         "draw_minute": 0,
@@ -830,7 +1020,7 @@ LOTTERY_CONFIG = {
     },
     "6aus49": {
         "label": "LOTTO 6aus49",
-        "weekdays": [2, 5],  # Mi, Sa
+        "weekdays": [2, 5],
         "weekday_names": {2: "Mittwoch", 5: "Samstag"},
         "draw_hour": 18,
         "draw_minute": 25,
@@ -879,8 +1069,8 @@ if "profiles" not in st.session_state:
 
 st.title("🍀 AstroLotto Score")
 st.caption(
-    "v4 · skyfield · echte Zeitzonen · Void of Course · Merkur-Details · "
-    "anwendende Aspekte · Tagesherrscher · Planetenstunden · Hochscore >75 %"
+    "v5 · Porphyry-Häuser · Aspektmuster · Progressionen · Solar Return · "
+    "Nordknoten/Chiron · Void of Course · anwendende Aspekte · Planetenstunden"
 )
 
 with st.expander("⚠️ Wichtiger Hinweis", expanded=False):
@@ -888,7 +1078,8 @@ with st.expander("⚠️ Wichtiger Hinweis", expanded=False):
         """
         **Nur zur Unterhaltung.** Astrologie ist keine wissenschaftlich belegte Methode,
         Lottoziehungen vorherzusagen. Die Gewinnwahrscheinlichkeit bleibt extrem niedrig.
-        Ephemeriden: skyfield + JPL DE421. Jackpot/Tipps = Platzhalter / live-Versuch.
+        Ephemeriden: skyfield + JPL DE421. Häuser: Porphyry (Näherung an Placidus).
+        Nordknoten/Chiron: Näherungsformeln. Jackpot/Tipps = Platzhalter / live-Versuch.
         """
     )
 
@@ -949,12 +1140,9 @@ st.caption("AstroWeather zeigt die **nächsten 3 Ziehungen** des gewählten Spie
 st.markdown("---")
 
 if st.button("Score berechnen", type="primary", use_container_width=True):
-    with st.spinner("Berechne Ephemeriden & Scores …"):
-        # Geburt: lokale Zeit am Geburtsort
+    with st.spinner("Berechne Ephemeriden, Progressionen & Scores …"):
         birth_naive = datetime.combine(birth_date, birth_time)
         birth_dt = make_aware(birth_naive, tz_name)
-
-        # Abfrage-Tag: Mittag lokal (für allgemeinen Score)
         query_naive = datetime.combine(query_date, time(12, 0))
         query_dt = make_aware(query_naive, tz_name)
 
@@ -984,7 +1172,6 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
         jackpots = fetch_jackpots()
         draws = build_draw_info(lottery_mode, query_date, jackpots)
 
-        # AstroScores für die nächsten 3 Ziehungen (exakte lokale Ziehungszeit)
         draw_scores = []
         for dr in draws:
             local_naive = datetime.combine(
@@ -1029,7 +1216,6 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
     with b4:
         st.info(f"📍 {city_choice}")
 
-    # Extra Badges
     badge_cols = st.columns(3)
     with badge_cols[0]:
         st.caption(f"Tagesherrscher: **{day_ruler_name}**")
@@ -1173,7 +1359,7 @@ if st.button("Score berechnen", type="primary", use_container_width=True):
         st.text(format_reasons(per_reasons))
 
     st.markdown("---")
-    export_text = f"""AstroLotto Score v4 – Export
+    export_text = f"""AstroLotto Score v5 – Export
 Abfrage: {query_date.isoformat()}
 Geburt: {birth_date.isoformat()} {birth_time.strftime('%H:%M')} · {city_choice} ({tz_name})
 Lotterie: {LOTTERY_CONFIG[lottery_mode]['label']}
@@ -1224,34 +1410,32 @@ Persönliche Faktoren:
     )
 
     st.caption(
-        "Ephemeriden: skyfield + JPL DE421 · Häuser: Whole-Sign (verbesserter ASC/MC) · "
-        "Zeitzonen: zoneinfo · Jackpot/Tipps: Platzhalter · Nur Unterhaltung"
+        "Ephemeriden: skyfield + JPL DE421 · Häuser: Porphyry · "
+        "Nordknoten/Chiron: Näherung · Progressionen/Solar Return aktiv · Nur Unterhaltung"
     )
 
 else:
     st.info("Daten eingeben und **Score berechnen** klicken.")
 
 with st.sidebar:
-    st.header("Regelwerk v4")
+    st.header("Regelwerk v5")
     st.markdown(
         """
         **50 % Allgemein + 50 % Persönlich**
 
-        **Neu / verbessert:**
-        - Echte Zeitzonen (`zoneinfo`)
-        - Verbesserter Aszendent + MC
-        - Void of Course Mond (−12)
-        - Merkur: Stationär, Verbrennung, Haus 3
-        - Anwendende Aspekte (stärker)
-        - Tagesherrscher & Planetenstunden
-        - Ruler der 5./8./11. Häuser
-        - Lot of Spirit
-        - Exakte Ziehungszeiten (EJ 20:00, 6aus49 18:25)
-        - Leichte Dämpfung sehr hoher Scores
+        **Neu in v5:**
+        - **Porphyry-Häuser** (Quadranten-Teilung, näher an Placidus)
+        - **Aspektmuster**: Großes Trigon, T-Quadrat, Yod
+        - **Sekundärprogressiver Mond** + progressiver ASC
+        - **Solar Return** (Jupiter/Uranus in Glückshäusern)
+        - **Nordknoten** (mittlerer Knoten) + **Chiron**-Näherung
 
-        **AstroWeather:** nächste 3 Ziehungen  
-        **Verlauf:** 14 Tage  
-        **Hochscore:** > 75 % bis Jahresende
+        **Bereits in v4:**
+        - Echte Zeitzonen, Void of Course, Merkur-Details
+        - Anwendende Aspekte, Tagesherrscher, Planetenstunden
+        - Ruler 5./8./11., Lot of Spirit, Score-Dämpfung
+
+        **AstroWeather** · **14-Tage-Verlauf** · **Hochscore > 75 %**
         """
     )
     st.markdown("---")
