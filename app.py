@@ -1134,146 +1134,263 @@ def build_google_calendar_ics(
 if "profiles" not in st.session_state:
     st.session_state.profiles = []
 
-# Custom CSS – Clean Fortune
+# Custom CSS – Clean Fortune (forced light widgets)
 st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    html, body, [class*="css"] {
-        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    /* Prevent browser/OS dark mode from forcing dark form controls */
+    :root, html, body, .stApp {
+        color-scheme: light only !important;
     }
-    .stApp {
-        background-color: #f8fafc;
+
+    /* ---------- Global light surface ---------- */
+    html, body, .stApp, [data-testid="stAppViewContainer"],
+    [data-testid="stHeader"], [data-testid="stToolbar"] {
+        background-color: #f8fafc !important;
+        color: #0f172a !important;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
     }
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #e2e8f0;
+    [data-testid="stHeader"] {
+        background: #ffffff !important;
     }
-    section[data-testid="stSidebar"] .stMarkdown h1 {
-        font-size: 1.35rem;
-        font-weight: 800;
-        letter-spacing: -0.02em;
+
+    /* ---------- Sidebar shell ---------- */
+    section[data-testid="stSidebar"],
+    section[data-testid="stSidebar"] > div,
+    [data-testid="stSidebarContent"] {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border-right: 1px solid #e2e8f0 !important;
     }
-    /* Metric cards */
+
+    /* All sidebar text readable */
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] span,
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] .stMarkdown,
+    section[data-testid="stSidebar"] [data-testid="stWidgetLabel"],
+    section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+    section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+    section[data-testid="stSidebar"] small {
+        color: #0f172a !important;
+        opacity: 1 !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+    section[data-testid="stSidebar"] .stCaption {
+        color: #64748b !important;
+    }
+
+    /* ---------- INPUTS: date / time / text / number ---------- */
+    section[data-testid="stSidebar"] input,
+    section[data-testid="stSidebar"] textarea,
+    [data-testid="stAppViewContainer"] input,
+    [data-testid="stAppViewContainer"] textarea,
+    div[data-baseweb="input"],
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="base-input"],
+    div[data-baseweb="base-input"] input,
+    .stDateInput input,
+    .stTimeInput input,
+    .stTextInput input,
+    .stNumberInput input {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        caret-color: #0f172a !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
+        opacity: 1 !important;
+    }
+    /* Baseweb wraps often set dark bg on parent */
+    section[data-testid="stSidebar"] div[data-baseweb="input"],
+    section[data-testid="stSidebar"] div[data-baseweb="base-input"],
+    section[data-testid="stSidebar"] .stDateInput > div > div,
+    section[data-testid="stSidebar"] .stTimeInput > div > div,
+    section[data-testid="stSidebar"] .stTextInput > div > div {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        border-color: #cbd5e1 !important;
+        color: #0f172a !important;
+    }
+
+    /* ---------- SELECT / MULTISELECT ---------- */
+    div[data-baseweb="select"] > div,
+    section[data-testid="stSidebar"] div[data-baseweb="select"] > div,
+    .stSelectbox div[data-baseweb="select"] > div,
+    .stMultiSelect div[data-baseweb="select"] > div {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        color: #0f172a !important;
+        border-color: #cbd5e1 !important;
+        border-radius: 8px !important;
+    }
+    div[data-baseweb="select"] span,
+    div[data-baseweb="select"] div {
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+    }
+    /* Dropdown popover menu */
+    div[data-baseweb="popover"],
+    div[data-baseweb="popover"] > div,
+    ul[role="listbox"],
+    ul[role="listbox"] li,
+    div[role="listbox"],
+    li[role="option"],
+    div[role="option"] {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+    }
+    li[role="option"]:hover,
+    div[role="option"]:hover {
+        background-color: #f1f5f9 !important;
+        color: #0f172a !important;
+    }
+    /* Multiselect chips */
+    span[data-baseweb="tag"],
+    [data-baseweb="tag"] {
+        background-color: #ecfdf5 !important;
+        color: #14532d !important;
+    }
+
+    /* ---------- RADIO / CHECKBOX ---------- */
+    .stRadio label,
+    .stCheckbox label,
+    section[data-testid="stSidebar"] .stRadio label,
+    section[data-testid="stSidebar"] .stCheckbox label {
+        color: #0f172a !important;
+        opacity: 1 !important;
+    }
+
+    /* ---------- BUTTONS ---------- */
+    .stButton > button[kind="primary"],
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background-color: #16a34a !important;
+        border: 1px solid #16a34a !important;
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+        font-weight: 600 !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #15803d !important;
+        border-color: #15803d !important;
+        color: #ffffff !important;
+    }
+    .stButton > button:not([kind="primary"]) {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        border: 1px solid #e2e8f0 !important;
+    }
+    .stDownloadButton > button {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        -webkit-text-fill-color: #0f172a !important;
+        border: 1px solid #e2e8f0 !important;
+    }
+    .stDownloadButton > button[kind="primary"] {
+        background-color: #16a34a !important;
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+        border-color: #16a34a !important;
+    }
+
+    /* ---------- DATAFRAME / TABLE ---------- */
+    [data-testid="stDataFrame"],
+    [data-testid="stDataFrame"] *,
+    [data-testid="stDataFrameResizable"],
+    .stDataFrame {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+    }
+    [data-testid="stDataFrame"] [role="gridcell"],
+    [data-testid="stDataFrame"] [role="columnheader"] {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border-color: #e2e8f0 !important;
+    }
+    [data-testid="stDataFrame"] [role="columnheader"] {
+        background-color: #f1f5f9 !important;
+        color: #1e293b !important;
+        font-weight: 600 !important;
+    }
+
+    /* ---------- EXPANDER / ALERT ---------- */
+    [data-testid="stExpander"] {
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 12px !important;
+        color: #0f172a !important;
+    }
+    [data-testid="stExpander"] * {
+        color: #0f172a !important;
+    }
+    div[data-testid="stAlert"] {
+        background-color: #eff6ff !important;
+        color: #1e3a8a !important;
+        border: 1px solid #bfdbfe !important;
+    }
+    div[data-testid="stAlert"] * {
+        color: #1e3a8a !important;
+    }
+
+    /* ---------- Custom cards (metric / weather / pills) ---------- */
     .cf-metric {
-        background: #ffffff;
+        background: #ffffff !important;
         border-radius: 16px;
         padding: 1.25rem 1.35rem;
-        box-shadow: 0 1px 3px rgba(15,23,42,0.06), 0 1px 2px rgba(15,23,42,0.04);
+        box-shadow: 0 1px 3px rgba(15,23,42,0.08);
         border-top: 3px solid #22c55e;
         text-align: left;
         min-height: 110px;
+        color: #0f172a !important;
     }
     .cf-metric.amber { border-top-color: #f59e0b; }
     .cf-metric.green { border-top-color: #22c55e; }
     .cf-metric.red { border-top-color: #ef4444; }
-    .cf-metric .label {
-        font-size: 0.8rem;
-        color: #64748b;
-        font-weight: 500;
-        margin-bottom: 0.25rem;
-    }
-    .cf-metric .value {
-        font-size: 2rem;
-        font-weight: 800;
-        letter-spacing: -0.03em;
-        line-height: 1.15;
-    }
-    .cf-metric .sub {
-        font-size: 0.75rem;
-        color: #94a3b8;
-        margin-top: 0.35rem;
-    }
-    /* Status pills */
-    .cf-pills {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        margin: 0.75rem 0 1.25rem 0;
-    }
+    .cf-metric .label { font-size: 0.8rem !important; color: #64748b !important; font-weight: 500 !important; }
+    .cf-metric .value { font-size: 2rem !important; font-weight: 800 !important; letter-spacing: -0.03em; line-height: 1.15; }
+    .cf-metric .sub { font-size: 0.75rem !important; color: #64748b !important; margin-top: 0.35rem; }
+
+    .cf-pills { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0 1.25rem 0; }
     .cf-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 999px;
-        padding: 0.35rem 0.85rem;
-        font-size: 0.8rem;
-        font-weight: 500;
-        color: #334155;
-        box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+        display: inline-flex; align-items: center; gap: 0.35rem;
+        background: #ffffff !important; border: 1px solid #e2e8f0 !important;
+        border-radius: 999px; padding: 0.35rem 0.85rem;
+        font-size: 0.8rem !important; font-weight: 500 !important; color: #1e293b !important;
     }
-    .cf-pill.ok { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
-    .cf-pill.warn { border-color: #fde68a; background: #fffbeb; color: #92400e; }
-    .cf-pill.bad { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
-    /* Weather cards */
+    .cf-pill.ok { border-color: #86efac !important; background: #f0fdf4 !important; color: #14532d !important; }
+    .cf-pill.warn { border-color: #fcd34d !important; background: #fffbeb !important; color: #78350f !important; }
+    .cf-pill.bad { border-color: #fca5a5 !important; background: #fef2f2 !important; color: #7f1d1d !important; }
+
     .cf-weather {
-        background: #ffffff;
-        border-radius: 14px;
-        padding: 1.1rem 1rem;
-        box-shadow: 0 1px 3px rgba(15,23,42,0.06);
-        border: 1px solid #e2e8f0;
-        text-align: center;
-        min-height: 140px;
+        background: #ffffff !important; border-radius: 14px; padding: 1.1rem 1rem;
+        box-shadow: 0 1px 3px rgba(15,23,42,0.08); border: 1px solid #e2e8f0 !important;
+        text-align: center; min-height: 140px; color: #0f172a !important;
     }
-    .cf-weather .wd {
-        font-size: 0.75rem;
-        color: #64748b;
-        font-weight: 500;
+    .cf-weather .wd { font-size: 0.75rem !important; color: #475569 !important; font-weight: 500 !important; }
+    .cf-weather .sc { font-size: 1.5rem !important; font-weight: 800 !important; margin: 0.35rem 0; }
+    .cf-weather .tag { font-size: 0.8rem !important; color: #475569 !important; }
+    .cf-weather .jp { font-size: 0.75rem !important; color: #64748b !important; margin-top: 0.4rem; }
+
+    .cf-section { font-size: 1.05rem !important; font-weight: 700 !important; color: #0f172a !important; margin: 1.5rem 0 0.35rem 0; }
+    .cf-section-sub { font-size: 0.85rem !important; color: #475569 !important; margin-bottom: 0.85rem; }
+    .cf-hero-title { font-size: 1.5rem !important; font-weight: 800 !important; color: #0f172a !important; letter-spacing: -0.03em; margin-bottom: 0.15rem; }
+    .cf-hero-sub { font-size: 0.9rem !important; color: #475569 !important; margin-bottom: 1.25rem; }
+    .cf-logo-title { font-weight: 800 !important; font-size: 1.2rem !important; color: #0f172a !important; letter-spacing: -0.02em; }
+    .cf-logo-sub { font-size: 0.7rem !important; color: #16a34a !important; font-weight: 600 !important; letter-spacing: 0.04em; }
+
+    /* Main markdown text */
+    [data-testid="stAppViewContainer"] .stMarkdown p,
+    [data-testid="stAppViewContainer"] .stMarkdown span,
+    [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"] {
+        color: #0f172a !important;
     }
-    .cf-weather .sc {
-        font-size: 1.5rem;
-        font-weight: 800;
-        margin: 0.35rem 0;
-        letter-spacing: -0.02em;
-    }
-    .cf-weather .jp {
-        font-size: 0.75rem;
-        color: #64748b;
-        margin-top: 0.4rem;
-    }
-    /* Section headers */
-    .cf-section {
-        font-size: 1.05rem;
-        font-weight: 700;
-        color: #0f172a;
-        margin: 1.5rem 0 0.35rem 0;
-        letter-spacing: -0.01em;
-    }
-    .cf-section-sub {
-        font-size: 0.85rem;
-        color: #64748b;
-        margin-bottom: 0.85rem;
-    }
-    /* Hero title */
-    .cf-hero-title {
-        font-size: 1.5rem;
-        font-weight: 800;
-        color: #0f172a;
-        letter-spacing: -0.03em;
-        margin-bottom: 0.15rem;
-    }
-    .cf-hero-sub {
-        font-size: 0.9rem;
-        color: #64748b;
-        margin-bottom: 1.25rem;
-    }
-    /* Hide default streamlit branding spacing */
-    div[data-testid="stVerticalBlock"] > div:first-child {
-        padding-top: 0.25rem;
-    }
-    /* Primary button in sidebar */
-    section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-        background-color: #16a34a;
-        border-color: #16a34a;
-        font-weight: 600;
-    }
-    section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
-        background-color: #15803d;
-        border-color: #15803d;
+    [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"],
+    [data-testid="stAppViewContainer"] .stCaption {
+        color: #64748b !important;
     }
     </style>
     """,
@@ -1295,7 +1412,7 @@ def _metric_html(label: str, value: float, sub: str) -> str:
     return f"""
     <div class="cf-metric {cls}">
         <div class="label">{label}</div>
-        <div class="value" style="color:{color};">{value:.1f} %</div>
+        <div class="value" style="color:{color} !important;">{value:.1f} %</div>
         <div class="sub">{sub}</div>
     </div>
     """
@@ -1317,8 +1434,8 @@ def _weather_card(weekday: str, date_str: str, score: float, jackpot: float, tip
     return f"""
     <div class="cf-weather">
         <div class="wd">{weekday}<br>{date_str}</div>
-        <div class="sc" style="color:{color};">{score:.1f} %</div>
-        <div style="font-size:0.8rem;color:#64748b;">{tag} {luck_symbol(score)}</div>
+        <div class="sc" style="color:{color} !important;">{score:.1f} %</div>
+        <div class="tag">{tag} {luck_symbol(score)}</div>
         <div class="jp">Jackpot ≈ {jackpot} Mio. € · Tipps ≈ {tips} Mio.</div>
     </div>
     """
@@ -1331,8 +1448,8 @@ with st.sidebar:
         <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
             <span style="font-size:1.6rem;">🍀</span>
             <div>
-                <div style="font-weight:800;font-size:1.2rem;letter-spacing:-0.02em;color:#0f172a;">AstroLotto</div>
-                <div style="font-size:0.7rem;color:#16a34a;font-weight:600;letter-spacing:0.04em;">SCORE</div>
+                <div class="cf-logo-title">AstroLotto</div>
+                <div class="cf-logo-sub">SCORE</div>
             </div>
         </div>
         """,
