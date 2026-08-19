@@ -23,6 +23,7 @@ import streamlit as st
 from datetime import date, datetime, timedelta, timezone, time
 from zoneinfo import ZoneInfo
 import math
+import random
 import time as time_module
 
 from skyfield.api import load
@@ -1250,17 +1251,94 @@ st.markdown(
         color-scheme: dark only !important;
     }
 
-    html, body, .stApp, [data-testid="stAppViewContainer"],
-    [data-testid="stHeader"], [data-testid="stToolbar"] {
+    html, body, .stApp {
         background-color: #050508 !important;
         color: #f8fafc !important;
         font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
     }
-    [data-testid="stHeader"] {
-        background: #050508 !important;
+    [data-testid="stAppViewContainer"],
+    [data-testid="stHeader"],
+    [data-testid="stToolbar"],
+    [data-testid="stMain"],
+    .stApp > header {
+        background: transparent !important;
+        color: #f8fafc !important;
     }
     [data-testid="stToolbar"] {
         color: #e2e8f0 !important;
+    }
+
+    /* Sternenhimmel + Sternschnuppen (hinter der UI) */
+    .als-sky {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        overflow: hidden;
+        background:
+            radial-gradient(ellipse 80% 50% at 15% 0%, rgba(40, 60, 140, 0.28), transparent 55%),
+            radial-gradient(ellipse 70% 45% at 90% 100%, rgba(20, 30, 90, 0.32), transparent 50%),
+            radial-gradient(ellipse 50% 40% at 50% 40%, rgba(8, 12, 40, 0.4), transparent 60%),
+            #050508;
+    }
+    .als-star {
+        position: absolute;
+        background: #ffffff;
+        border-radius: 50%;
+        box-shadow: 0 0 6px 1px rgba(180, 230, 255, 0.55);
+        animation: als-twinkle 3.4s ease-in-out infinite;
+    }
+    .als-star.bright {
+        background: #e0f7ff;
+        box-shadow: 0 0 10px 2px rgba(0, 229, 255, 0.55);
+    }
+    @keyframes als-twinkle {
+        0%, 100% { opacity: 0.25; transform: scale(0.75); }
+        50% { opacity: 1; transform: scale(1.2); }
+    }
+    .als-shoot {
+        position: absolute;
+        width: 110px;
+        height: 2px;
+        background: linear-gradient(90deg, rgba(255,255,255,0.95), rgba(0,229,255,0.55), transparent);
+        border-radius: 999px;
+        transform: rotate(-32deg);
+        opacity: 0;
+        filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.8));
+        animation: als-shoot 8s linear infinite;
+    }
+    .als-shoot::after {
+        content: "";
+        position: absolute;
+        right: -2px;
+        top: 50%;
+        width: 6px;
+        height: 6px;
+        margin-top: -3px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 0 10px 3px rgba(0, 229, 255, 0.9);
+    }
+    @keyframes als-shoot {
+        0% {
+            transform: translate3d(0, 0, 0) rotate(-32deg);
+            opacity: 0;
+        }
+        4% { opacity: 1; }
+        18% {
+            transform: translate3d(-55vw, 38vh, 0) rotate(-32deg);
+            opacity: 0;
+        }
+        100% { opacity: 0; }
+    }
+    [data-testid="stAppViewContainer"] > .main,
+    [data-testid="stMain"] {
+        position: relative;
+        z-index: 1;
+        background: transparent !important;
+    }
+    [data-testid="stDecoration"] {
+        background: transparent !important;
     }
 
     section[data-testid="stSidebar"],
@@ -1624,6 +1702,43 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+def _starfield_html() -> str:
+    """Fester Sternenhimmel mit zwinkernden Sternen und Sternschnuppen."""
+    rng = random.Random(42)
+    stars = []
+    for _ in range(90):
+        x = rng.uniform(0, 100)
+        y = rng.uniform(0, 100)
+        size = rng.choice([1, 1, 1, 2, 2, 3])
+        delay = rng.uniform(0, 4.5)
+        duration = rng.uniform(2.4, 4.8)
+        cls = "als-star bright" if size >= 3 else "als-star"
+        stars.append(
+            f'<span class="{cls}" style="left:{x:.2f}%;top:{y:.2f}%;'
+            f'width:{size}px;height:{size}px;animation-delay:{delay:.2f}s;'
+            f'animation-duration:{duration:.2f}s"></span>'
+        )
+    shoots = []
+    for i in range(7):
+        top = rng.uniform(2, 52)
+        left = rng.uniform(28, 98)
+        delay = i * 1.15 + rng.uniform(0, 0.6)
+        duration = rng.uniform(7.2, 10.5)
+        shoots.append(
+            f'<span class="als-shoot" style="top:{top:.1f}%;left:{left:.1f}%;'
+            f'animation-delay:{delay:.2f}s;animation-duration:{duration:.2f}s"></span>'
+        )
+    return (
+        '<div class="als-sky" aria-hidden="true">'
+        + "".join(stars)
+        + "".join(shoots)
+        + "</div>"
+    )
+
+
+st.markdown(_starfield_html(), unsafe_allow_html=True)
 
 
 def _metric_border(score: float) -> str:
