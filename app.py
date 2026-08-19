@@ -1795,6 +1795,64 @@ if calculate:
             birth_dt, lat, lon, lottery_mode, query_date, tz_name, threshold=75.0
         )
 
+        # Persist results so UI interactions (calendar select) don't wipe the page
+        st.session_state.results = {
+            "gen_score": gen_score,
+            "per_score": per_score,
+            "comb_score": comb_score,
+            "gen_reasons": gen_reasons,
+            "per_reasons": per_reasons,
+            "phase_label": phase_label,
+            "merc_rx": merc_rx,
+            "merc_stat": merc_stat,
+            "merc_comb": merc_comb,
+            "voc": voc,
+            "day_ruler_name": day_ruler_name,
+            "hour_ruler_name": hour_ruler_name,
+            "draws": draws,
+            "draw_scores": draw_scores,
+            "trend_dates": trend_dates,
+            "trend_scores": trend_scores,
+            "high_score_draws": high_score_draws,
+            "lottery_mode": lottery_mode,
+            "query_date": query_date,
+            "birth_date": birth_date,
+            "birth_time": birth_time,
+            "city_choice": city_choice,
+            "tz_name": tz_name,
+            "lat": lat,
+            "lon": lon,
+        }
+        # reset calendar form selection on new calculation
+        st.session_state.pop("cal_form_labels", None)
+
+# ---- Display persisted results ----
+if st.session_state.get("results"):
+    R = st.session_state.results
+    gen_score = R["gen_score"]
+    per_score = R["per_score"]
+    comb_score = R["comb_score"]
+    gen_reasons = R["gen_reasons"]
+    per_reasons = R["per_reasons"]
+    phase_label = R["phase_label"]
+    merc_rx = R["merc_rx"]
+    merc_stat = R["merc_stat"]
+    merc_comb = R["merc_comb"]
+    voc = R["voc"]
+    day_ruler_name = R["day_ruler_name"]
+    hour_ruler_name = R["hour_ruler_name"]
+    draws = R["draws"]
+    draw_scores = R["draw_scores"]
+    trend_dates = R["trend_dates"]
+    trend_scores = R["trend_scores"]
+    high_score_draws = R["high_score_draws"]
+    lottery_mode = R["lottery_mode"]
+    query_date = R["query_date"]
+    birth_date = R["birth_date"]
+    birth_time = R["birth_time"]
+    city_choice = R["city_choice"]
+    tz_name = R["tz_name"]
+
     # --- Metric tiles ---
     m1, m2, m3 = st.columns(3)
     with m1:
@@ -1892,9 +1950,7 @@ if calculate:
             tooltip=["Datum", "Score"],
         )
         .properties(height=240)
-        .configure(
-            background="#ffffff",
-        )
+        .configure(background="#ffffff")
         .configure_view(strokeWidth=0, fill="#ffffff")
         .configure_axis(grid=True, domainColor="#e2e8f0")
     )
@@ -1904,7 +1960,7 @@ if calculate:
         f"Höchster Wert: **{trend_scores[best_i]} %** am {trend_dates[best_i]}"
     )
 
-    # --- High scores ---
+    # --- High scores + calendar form (no mid-selection wipe) ---
     st.markdown(
         f'<div class="cf-section">Beste Tage (High Scores) – Rest {query_date.year}</div>'
         f'<div class="cf-section-sub">'
@@ -1937,22 +1993,32 @@ if calculate:
         }
         all_labels = list(label_to_row.keys())
 
-        c_a, c_b = st.columns([3, 1])
-        with c_b:
-            select_all = st.checkbox("Alle auswählen", key="high_select_all", value=False)
-        if select_all:
-            chosen_labels = all_labels
-            st.success(f"Alle {len(all_labels)} Tage ausgewählt.")
-        else:
+        with st.form("calendar_export_form", clear_on_submit=False):
+            select_all = st.checkbox("Alle auswählen", value=False)
             chosen_labels = st.multiselect(
                 "Tage für Google-Kalender auswählen",
                 options=all_labels,
-                default=[],
-                key="high_score_multiselect",
+                default=all_labels if False else [],
+                help="Mehrere Tage markieren, dann unten auf „Auswahl übernehmen“ klicken.",
+            )
+            submitted = st.form_submit_button(
+                "Auswahl übernehmen",
+                use_container_width=True,
+                type="secondary",
             )
 
-        selected_rows = [label_to_row[lb] for lb in chosen_labels if lb in label_to_row]
-        st.caption(f"**{len(selected_rows)}** Tag(e) ausgewählt")
+        if submitted:
+            if select_all:
+                st.session_state.cal_form_labels = all_labels
+            else:
+                st.session_state.cal_form_labels = chosen_labels
+
+        chosen_final = st.session_state.get("cal_form_labels", [])
+        if select_all and submitted:
+            chosen_final = all_labels
+
+        selected_rows = [label_to_row[lb] for lb in chosen_final if lb in label_to_row]
+        st.caption(f"**{len(selected_rows)}** Tag(e) für Export vorgemerkt")
 
         cfg = LOTTERY_CONFIG[lottery_mode]
         if selected_rows:
@@ -1982,17 +2048,15 @@ if calculate:
                     f"{cfg['draw_hour']:02d}:{cfg.get('draw_minute', 0):02d} Uhr."
                 )
         else:
-            st.caption("Mindestens einen Tag auswählen für den Kalender-Export.")
+            st.caption("Tage auswählen und **Auswahl übernehmen** klicken, dann exportieren.")
     else:
         st.info("Keine Ziehungstage mit Score > 75 % im Rest des Jahres gefunden.")
 
-    # Factors
     with st.expander("Allgemeine Faktoren (gewichtet)"):
         st.text(format_reasons(gen_reasons))
     with st.expander("Persönliche Faktoren (gewichtet)"):
         st.text(format_reasons(per_reasons))
 
-    # Text export
     export_text = f"""AstroLotto Score v5 – Export
 Abfrage: {query_date.isoformat()}
 Geburt: {birth_date.isoformat()} {birth_time.strftime('%H:%M')} · {city_choice} ({tz_name})
